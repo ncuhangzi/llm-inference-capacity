@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>LLM 推論與服務容量</title>
+<meta name="description" content="拆解 LLM 推論的成本結構：為什麼 decode 卡在頻寬、混合架構的記憶體帳本、NVFP4 到底量化了哪些張量，以及 speculative decoding 什麼時候會賠錢。">
+<style>
+:root{--ink:#14181f;--ink2:#39424e;--mut:#6b7683;--mut2:#98a1ac;--line:#e3e6ea;--line2:#eef0f3;
+ --compute:#1f6feb;--mem:#c2740a;--ssm:#0d8f84;--spec:#c81e78;--ok:#15954b;--card2:#fafbfc;
+ --sans:"Inter","Noto Sans TC","PingFang TC","Microsoft JhengHei","Segoe UI",system-ui,sans-serif;
+ --mono:"JetBrains Mono","Cascadia Mono",Consolas,monospace}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:var(--sans);color:var(--ink);background:#fff;line-height:1.75;
+ -webkit-font-smoothing:antialiased}
+.wrap{max-width:880px;margin:0 auto;padding:78px 26px 90px}
+.kick{font-size:12px;font-weight:700;letter-spacing:.2em;color:var(--compute);text-transform:uppercase}
+h1{font-size:42px;line-height:1.14;letter-spacing:-.03em;margin:15px 0 0}
+.lede{font-size:18.5px;line-height:1.62;color:var(--mut);margin-top:15px;max-width:36em}
+.meta{margin-top:24px;padding-top:17px;border-top:1px solid var(--line2);font-size:13px;
+ color:var(--mut2);display:flex;flex-wrap:wrap;gap:8px 20px}
+.meta b{color:var(--ink2);font-weight:600}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:16px;margin:38px 0 0}
+a.card{display:block;text-decoration:none;color:inherit;background:var(--card2);
+ border:1px solid var(--line2);border-left:3px solid var(--c,var(--compute));border-radius:11px;
+ padding:20px 22px;transition:.16s}
+a.card:hover{background:#fff;border-color:var(--c,var(--compute));transform:translateY(-2px);
+ box-shadow:0 10px 28px -14px rgba(16,24,40,.3)}
+a.card .n{font-size:19px;font-weight:700;letter-spacing:-.016em;color:var(--c,var(--compute))}
+a.card .d{font-size:14px;color:var(--ink2);margin-top:7px;line-height:1.6}
+a.card .s{font-size:12px;color:var(--mut2);margin-top:11px;font-family:var(--mono)}
+h2{font-size:23px;letter-spacing:-.02em;margin:56px 0 4px}
+p{font-size:16.5px;color:var(--ink2);margin:13px 0}
+ol{margin:16px 0;padding-left:22px}
+li{font-size:16px;color:var(--ink2);margin:11px 0;line-height:1.72}
+li b{color:var(--ink);font-weight:650}
+code{font-family:var(--mono);font-size:.88em;background:#f6f7f9;border:1px solid var(--line2);
+ border-radius:4px;padding:1.5px 5px}
+.note{background:#fdf3e3;border:1px solid #f0dcb4;border-radius:9px;padding:13px 17px;
+ font-size:14.5px;line-height:1.65;color:#7c4a03;margin:26px 0}
+footer{margin-top:60px;padding-top:24px;border-top:1px solid var(--line2);font-size:13.5px;
+ color:var(--mut);line-height:1.8}
+footer a{color:var(--compute)}
+@media(max-width:640px){h1{font-size:31px}.lede{font-size:16.5px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="kick">Inference · Memory · Capacity</div>
+  <h1>LLM 推論與服務容量</h1>
+  <p class="lede">從一次 forward 的成本結構，一路推到「這台機器能服務幾個人」。
+  對象是 Qwen3.5-122B-A10B（NVFP4）與 Qwen3.8-27B（FP8），跑在 vLLM / NVIDIA B200 上。</p>
+  <div class="meta">
+    <span><b>資料查核</b> 2026-09-08</span>
+    <span><b>參考來源</b> 27 筆</span>
+    <span><b>互動圖表</b> 32 張動畫 + 6 個試算器</span>
+    <span><b>誤差</b> 參數推導與 checkpoint 對帳 &lt; 0.02%</span>
+  </div>
+
+  <div class="cards">
+    <a class="card" href="LLM推論技術部落格.html" style="--c:var(--compute)">
+      <div class="n">技術部落格</div>
+      <div class="d">長文版。讀 30–40 分鐘，圖都可以自己按，每個數字附推導與引用。
+      想快速讀懂就從這裡開始。</div>
+      <div class="s">330 KB · 單檔離線</div>
+    </a>
+    <a class="card" href="LLM推論報告_v2.html" style="--c:var(--ssm)">
+      <div class="n">簡報版</div>
+      <div class="d">82 頁投影片。逐步動畫、講者筆記、目錄與名詞表，鍵盤操作。
+      要上台講就用這個。</div>
+      <div class="s">1.2 MB · 單檔離線</div>
+    </a>
+    <a class="card" href="LLM推論報告_v2.pdf" style="--c:var(--mem)">
+      <div class="n">PDF</div>
+      <div class="d">簡報的靜態版，82 頁。動畫停在最終狀態，方便列印或直接傳給人。</div>
+      <div class="s">4.3 MB</div>
+    </a>
+    <a class="card" href="https://github.com/ncuhangzi/llm-inference-capacity"
+       style="--c:var(--spec)">
+      <div class="n">原始碼</div>
+      <div class="d">所有數字由 <code>v2/model.py</code> 推導，沒有手打的常數。
+      官方 config 與 weight map 摘要也在 repo 裡，可以自己驗算。</div>
+      <div class="s">GitHub</div>
+    </a>
+  </div>
+
+  <h2>五個主要結論</h2>
+  <ol>
+    <li><b>Decode 卡在頻寬，不是算力。</b>一次 forward 要把整份權重讀過一遍，
+    卻只服務 batch 裡那幾個 token。serving 上的最佳化都在提高「每次讀取分攤到的 token 數」。</li>
+    <li><b>B200 的臨界值是 292 token/step，而且與精度無關。</b>
+    <code>N* = F·b/(2·BW)</code>；Blackwell 每降半位寬就把算力加倍，分子分母剛好相消，
+    所以 BF16、FP8、NVFP4 算出來都是 292。</li>
+    <li><b>混合架構要把兩種 cache 分開算。</b>122B 的 KV 只有 12 KiB/token（FP8），
+    但多了每條序列固定約 150 MiB 的 SSM state。短對話時記憶體是被那個固定成本吃掉的。</li>
+    <li><b>NVFP4 只量化了 routed expert。</b>36 層 Gated DeltaNet、12 層 attention、
+    lm_head、MTP head 全部還是 BF16，佔了 checkpoint 的 21.9% 與 batch-1 頻寬的一半。
+    這是從 safetensors 的 weight map 直接讀出來的。</li>
+    <li><b>Speculative decoding 由 <code>B × (k+1)</code> 有沒有超過 292 決定。</b>
+    27B 配 DFlash2 猜 7 個，安全併發約 36。而且接受率不是常數：實測顯示 context
+    從 2k 長到 30k，平均接受率從 65% 掉到 39%。</li>
+  </ol>
+
+  <div class="note">
+    文件裡的吞吐、延遲與佇列曲線是<b>教學示例</b>（以排隊理論生成），
+    不是任何硬體的實測結果，不可當成 B200 實測成績引用。
+    架構參數與 checkpoint 位元組數則來自官方來源，可以直接引用。
+  </div>
+
+  <footer>
+    <p>程式碼採 MIT，文章與圖表採 CC BY 4.0。引用到的第三方 benchmark 數字版權屬原作者。</p>
+    <p><a href="https://github.com/ncuhangzi/llm-inference-capacity">github.com/ncuhangzi/llm-inference-capacity</a></p>
+  </footer>
+</div>
+</body>
+</html>

@@ -1,0 +1,12 @@
+# QA 產出的逐頁截圖（用 node v2/qa.cjs 重跑就會回來）
+qa/*.png
+qa2/**/*.png
+
+# safetensors index 原始檔太大（NVFP4 那份 16 MB）。
+# 版控的是 research/weightmap_summary.json，用 fetch_more.py 可以重抓原檔。
+research/*-model.safetensors.index.json
+
+__pycache__/
+*.pyc
+.DS_Store
+Thumbs.db

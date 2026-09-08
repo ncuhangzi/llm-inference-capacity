@@ -1,0 +1,25 @@
+{
+  "repo": "Qwen/Qwen3.8-27B",
+  "revision": "1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0",
+  "safetensors": {
+    "parameters": {
+      "BF16": 27781427952
+    },
+    "total": 27781427952
+  },
+  "tags": [
+    "transformers",
+    "safetensors",
+    "qwen3_5",
+    "image-text-to-text",
+    "conversational",
+    "license:apache-2.0",
+    "eval-results",
+    "endpoints_compatible",
+    "deploy:azure",
+    "deploy:sagemaker",
+    "region:us"
+  ],
+  "weight_file_bytes": 55563006776,
+  "n_weight_files": 18
+}

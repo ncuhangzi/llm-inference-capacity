@@ -1,0 +1,36 @@
+{
+  "repo": "nvidia/Qwen3.5-122B-A10B-NVFP4",
+  "revision": "98915d837c4e7c87ac8296d02e89de19b3207e6d",
+  "safetensors": {
+    "parameters": {
+      "BF16": 9122380016,
+      "F8_E4M3": 7247757312,
+      "U8": 57982058496
+    },
+    "total": 64580759280
+  },
+  "tags": [
+    "Model Optimizer",
+    "safetensors",
+    "qwen3_5_moe",
+    "nvidia",
+    "ModelOpt",
+    "Qwen3.5",
+    "quantized",
+    "NVFP4",
+    "FP4",
+    "nvfp4",
+    "fp4",
+    "text-generation",
+    "conversational",
+    "base_model:Qwen/Qwen3.5-122B-A10B",
+    "base_model:quantized:Qwen/Qwen3.5-122B-A10B",
+    "license:apache-2.0",
+    "8-bit",
+    "modelopt",
+    "deploy:azure",
+    "region:us"
+  ],
+  "weight_file_bytes": 83495005008,
+  "n_weight_files": 9
+}
