@@ -53,11 +53,90 @@ figure("autoreg", F1.fig_autoregress(), 5, [
 p("最後那一步是整篇文章的起點。一次 forward 要把模型的每一個權重都從 HBM 搬進計算單元，",
   "但如果同時只有一個使用者，這一趟搬運只換到一個 token。GPU 的張量核心在這個過程裡幾乎全程閒著。")
 
+h3("先看模型實際收到什麼", "tokenize")
+
+p("講成本之前，得先確定分母是什麼。使用者打的是字，模型收到的是一串整數。", cite("tok"))
+
+figure("tokenize", F5.fig_tokenize_real(), 4, [
+    "使用者打了 13 個中文字。",
+    "<b>① tokenizer</b> 用 BPE 把它切成 8 個 token，每個查表換成一個整數 id。",
+    "順帶一提：「修正」被切成「修」+「正是」。BPE 只看統計，不管詞的邊界。",
+    "<b>② chat template</b> 再包上角色標記。",
+    "<b>③</b> 這串 id 的長度 T，才是這篇文章所有公式的分母。"],
+    "這些 id 是拿官方 tokenizer.json 的 vocab 與 merges 實跑 byte-level BPE 得到的，"
+    "不是示意值。程式在 research/tokenize_demo.py。", accent="compute")
+
+p("13 個字變成 8 個 token，加上 chat template 之後大約 20 個。中文大約 1.6 個字一個 token，",
+  "英文大約 5.5 個字元一個 token。業務端談字數、容量計算談 token 數，中間差這麼多，",
+  "估算的時候要記得換算。")
+
+h3("Vocabulary 是什麼，lm_head 為什麼那麼貴", "vocab")
+
+p("先回答一個常被問的問題：vocab 是不是「一張混合所有語言的詞的對照表」？",
+  "大致是，但有兩個修正。它是<b>跨語言共用的一張表</b>沒錯，",
+  "但表裡的東西不是「詞」，是 byte-level BPE 切出來的 subword。",
+  "常見的中文詞多半剛好一個 token，常見的英文字也是，罕見的才會被拆開。")
+
+p("實際數字：Qwen3.8 的 BPE vocab 有 248,044 條，加上 33 個特殊 token（",
+  "<code>&lt;|im_start|&gt;</code> = 248045 這種），共 248,077 條。",
+  "但 config 宣告的 <code>vocab_size</code> 是 248,320，中間差的 243 條是 padding，",
+  "把長度湊成 128 的倍數讓 kernel 好對齊。", cite("tok", "c38"))
+
+h4("BF16 佔用怎麼算")
+
+p("這題很直接。參數量就是矩陣的元素個數，BF16 每個元素 2 bytes：")
+
+formula(f"embedding 參數 = <em>V</em> × <span class='c2'>d</span> = "
+        f"{Q35.vocab:,} × {Q35.hidden:,} = {Q35.vocab*Q35.hidden:,}"
+        f"<br>BF16 佔用 = {Q35.vocab*Q35.hidden:,} × <span class='c3'>2 B</span> = "
+        f"{Q35.vocab*Q35.hidden*2:,} B ≈ {Q35.vocab*Q35.hidden*2/1e9:.2f} GB",
+        f"122B 的 hidden 是 3,072；27B 的 hidden 是 5,120，所以它的 embedding 是 "
+        f"{Q38.vocab*Q38.hidden*2/1e9:.2f} GB。"
+        f"兩個模型的 <code>tie_word_embeddings</code> 都是 false，"
+        f"表示 embedding 與 lm_head 是兩份獨立的權重，要各算一次。")
+
+h4("為什麼 lm_head 每個 decode step 都要整個讀完")
+
+p("這題值得寫成式子。最後一層算完之後，你手上只有一個向量 h，長度就是 hidden size。",
+  "lm_head 把它投影成詞彙表那麼長的分數：")
+
+formula("logits[<em>i</em>] = Σ<sub>j</sub> h[j] · W[<em>i</em>][j]"
+        f"，　<em>i</em> = 0 … {Q35.vocab-1:,}",
+        "要算出第 i 個分數，就要讀 W 的第 i 列。")
+
+p("關鍵在下一步。抽樣之前要先做 softmax，而 softmax 的分母是<b>所有</b>分數的指數和：")
+
+formula("P(token = <em>i</em>) = exp(logits[<em>i</em>]) / "
+        f"Σ<sub>j=0</sub><sup>{Q35.vocab-1:,}</sup> exp(logits[j])",
+        "分母要跑過全部 248,320 個 logits。少算一個，機率分布就是錯的。")
+
+p("所以你不能「只算可能的那幾個字」。既然每個 logits[i] 都要算，",
+  "W 的每一列就都要讀，整張 [V × d] 一個位元組都省不掉。")
+
+figure("lmhead", F5.fig_lmhead("q35"), 5, [
+    "最後一層算完，手上只有一個長度 3,072 的向量 h。",
+    "<b>lm_head</b> 把它投影成詞彙表那麼長的分數。",
+    "得到 248,320 個 logits，softmax 之後抽一個當作下一個 token。",
+    "算第 i 個分數要讀 W 的第 i 列。而 softmax 要對<b>全部</b>分數正規化，一個都不能少。",
+    "所以整張 [V × d] 都得讀。對照 embedding：同樣的形狀，但查表只讀一列。",
+    "batch B 的時候這 1.53 GB 只讀一次、被 B 個 token 分攤。"], accent="mem")
+
+note(f"""
+<h4>同樣的形狀，成本差幾千倍</h4>
+<p><b>embed_tokens</b> 也是 [V × d]，但它是查表：拿到 token id 就取出那一列，
+讀 {Q35.hidden:,} × 2 B = {Q35.hidden*2/1024:.0f} KiB。幾乎免費。</p>
+<p><b>lm_head</b> 是矩陣乘法：對每一列都算一次內積，讀滿
+{Q35.vocab*Q35.hidden*2/1e9:.2f} GB，每個 decode step 一次。</p>
+<p>一個是「用 id 找列」，一個是「對每一列都算一次」。這個不對稱後面還會出現一次：
+PART 07 會看到 MTP 起草器的成本幾乎就是「再讀一次 lm_head」，
+所以它每多猜一個 token 就多付 1.53 GB。</p>
+""", "key")
+
 h3("KV cache：拿記憶體換計算", "kv")
 
 p("Attention 需要拿本輪的 Query 去比對<b>前面每一個位置</b>的 Key 和 Value。",
   "如果每輪都重算前面所有位置，總成本會是 O(T²)。所以大家都把算過的 K/V 存起來，",
-  "這就是 ", T("KV cache"), "。", cite("paged"))
+  "存起來的那份就叫 ", T("KV cache"), "。", cite("paged"))
 
 figure("kv", F1.fig_kv(), 4, [
     "attention 需要本輪的 q 去比對所有位置的 K/V。",
@@ -67,8 +146,49 @@ figure("kv", F1.fig_kv(), 4, [
     "<b>④</b> 沒有 cache 的話，每輪都要把前面重算一次，總成本變 O(T²)。"],
     "KV cache 把生成成本從 O(T²) 壓到 O(T)，代價是每個 token 都要永久佔一塊 HBM。")
 
-p("這筆交易在長 context 下非常划算，但它的代價是<b>記憶體</b>：每個 token 都要佔一塊 HBM，",
-  "直到這個 request 結束。而這就是併發數的硬上限。")
+p("長 context 下這筆交易很划算，但代價是<b>記憶體</b>：每個 token 都要佔一塊 HBM，",
+  "直到這個 request 結束。併發數的硬上限就卡在這裡。")
+
+h3("為什麼舊 token 不用重算", "causal")
+
+p("KV cache 聽起來理所當然，但它成立有一個前提，而這個前提值得講清楚：",
+  "<b>因為是 causal decoder，未來 token 的出現不會改變過去 token 已經算好的 K/V。</b>",
+  "序列每次 +1，但不是整條序列都要重算。")
+
+figure("causal", F5.fig_causal(), 4, [
+    "Prefill 完 A B C 之後，causal attention 是一個下三角：每個位置只看得到自己與前面。",
+    "生出 D 之後，矩陣多了一列一行。",
+    "但左上角 A/B/C 那一整塊<b>完全沒變</b>。因為 A、B、C 不可能突然看得到 D。",
+    "所以只要算新增的那一列：Q_D × [K_A, K_B, K_C, K_D]。",
+    "KV cache 解決的是「不要重算歷史」。它沒有解決「現在的 query 還是得掃過全部歷史」。"],
+    "如果是 encoder 那種雙向 attention，這個性質就不成立，KV cache 也就不可能存在。")
+
+p("這裡有個常見的混淆。很多人以為有了 KV cache，decode 的 attention 就變成 O(1)。不是。",
+  "省掉的是「重算歷史 K/V」，沒省掉的是「拿現在的 Q 去查全部歷史 K/V」。",
+  "後者還是 O(T)，所以長 context 的 decode 會越跑越慢。這兩件事要分開看。")
+
+h3("為什麼叫 KV cache，不叫 QKV cache", "qkv")
+
+p("這個命名其實很精準。下一個 token 進來的時候，它需要全部的 K（去比對）",
+  "與全部的 V（比對到之後讀出來），但<b>完全不需要以前的 Q</b>。")
+
+figure("qkv", F5.fig_qkv_roles(), 4, [
+    "下一個 token E 進來的時候，它需要什麼？",
+    "<b>歷史的 Q 完全用不到。</b>Q_A 到 Q_D 問過的問題，跟 E 想問的無關。",
+    "但它需要全部的 K 與全部的 V。",
+    "所以只有 K 和 V 要留著。",
+    "順帶把兩種 cache 的差別擺在一起：attention 是 append，GDN 是就地覆寫。"],
+    "Q 是「我現在想查什麼」，一次性的問題；K/V 是「我留給未來查的東西」。", accent="mem")
+
+note("""
+<p>一組好記的對照：</p>
+<p><b>Q</b> = 現在這個 token 想查什麼 → 用完丟掉<br>
+<b>K</b> = 以前的 token 留下的、可被搜尋的索引 → 留著<br>
+<b>V</b> = 索引命中之後要讀出來的內容 → 留著</p>
+<p>這也順帶解釋了下一節的 GQA 為什麼可行：不同的 Q head 就算共用同一組 K/V，
+因為問的問題不同，算出來的 attention 分數還是不同。像同一個資料庫，
+不同的人問不同的問題。省的是資料庫，不是問問題的能力。</p>
+""")
 
 h3("GQA：Q 很多、K/V 很少", "gqa")
 
@@ -166,7 +286,7 @@ note(f"""
 <p>所以「上了 FP4 就不再是 memory-bound」是個誤會。FP4 讓你讀得更快，也讓你算得更快，
 你在屋頂線上的<b>相對位置</b>沒有動。</p>
 <p>量化真正買到的是三件事：step 時間變短、模型裝得進更少張卡、省下來的 HBM 全部變成 cache 空間。
-要離開 memory-bound 只有一條路，就是提高每個 step 的 token 數 ——
+要離開 memory-bound 只有一條路，就是提高每個 step 的 token 數：
 更大的 batch，或是 {T("Speculative decoding")}。</p>
 <p>反過來說，只要 N &lt; {KNEE:.0f}，你手上就有一塊<b>免費的算力</b>。
 這塊算力就是 speculative decoding 的本錢。</p>
@@ -248,6 +368,34 @@ figure("arch3", F2.fig_arch3(), 2, [
     "同一個 decoder 骨架，換掉 token mixer 與 channel mixer 兩個插槽，"
     "就得到三種完全不同的成本結構。", accent="moe")
 
+h3("先分清楚兩種 mixer", "mixers")
+
+p("在談 GDN 之前，先把一層裡的兩個角色分開。這個框架會讓後面所有的架構討論變簡單。")
+
+figure("mixers", F5.fig_mixers(), 5, [
+    "一層裡有兩個插槽，各自回答一個不同的問題。",
+    "<b>Token mixer</b> 跨位置搬運資訊；<b>Channel mixer</b> 在同一個位置內把 feature 重新組合。",
+    "舉個例子：The cat didn’t eat the fish because <b>it</b> was sick。"
+    "Attention 先把「cat 是動物」「是前句主詞」「sick」這些資訊搬到 it 這個位置。",
+    "然後 FFN 把它們組合成新的東西：「it 指的大概是 cat」。",
+    "所以有人用 Attention = communication、FFN = computation 這組對照來記。",
+    "換掉 token mixer，cache 的形狀就變了；換掉 channel mixer，只有算力與權重大小變。"],
+    "Attention、GDN、SSM 在競爭 token mixer 這個位置；FFN、SwiGLU、MoE 在競爭 channel mixer。",
+    accent="moe")
+
+p("為什麼 channel mixer 有存在的必要？因為 attention 只會「搬」，不會「算」。",
+  "如果一層裡只有 attention，你很會從各處收集資訊，但不擅長把收集到的東西轉成更抽象的表示。")
+
+p("FFN 的每個 neuron 都是一個 feature detector。它對輸入的所有維度做加權組合",
+  "（z = 0.7·x₁ + 0.2·x₂ − 1.1·x₃ + …），再過一個非線性，",
+  "用來偵測「某種特定的 feature 組合有沒有出現」。SwiGLU 就是這個結構加上一道 gate。")
+
+note("""
+<p><b>一個對容量規劃有用的推論</b>：channel mixer 不需要任何歷史 cache。
+所以 MoE 再大也不會增加每條序列的記憶體，只會增加權重。
+後面「MoE 省算力不省記憶體」那句話就是從這裡來的。</p>
+""")
+
 h3("核心想法：把逐字稿換成摘要", "linear")
 
 p("Full attention 保留每一個位置的 K/V，所以什麼都查得到，但檔案越來越厚。",
@@ -303,7 +451,80 @@ figure("chunk", F2.fig_chunkwise(), 4, [
     "同時，full attention 層照常做 FlashAttention 並寫入 prompt 的 K/V。",
     "注意：vLLM 對 mamba / GDN 的 prefix caching 仍在開發中。"],
     "chunkwise 平行讓混合模型的 prefill 不會因為 GDN 而變慢。"
-    "真正的差異在 decode（省很多）與 prefix caching（目前吃虧）。", accent="ssm")
+    "差異在 decode（省很多）與 prefix caching（目前吃虧）。", accent="ssm")
+
+h3("Delta rule 在解決什麼", "delta")
+
+p("上面那條式子裡的 (I − βkkᵀ) 值得單獨講。它解決的問題是：同一個 key 被寫兩次會怎樣。")
+
+figure("delta", F5.fig_delta(), 6, [
+    "假設 memory 裡已經有「apple → red」，後來又出現「apple → green」。",
+    "最原始的 linear attention 只會一直累加，兩筆疊在一起，查 apple 會得到混合的東西。",
+    "Delta rule 的做法：先用 k 去查 state，看它現在記得什麼（red），"
+    "算出誤差（green − red），再只修正那個差額。",
+    "把完整式子拆開來看。",
+    "<b>α</b> 管整體遺忘，<b>(I − βkkᵀ)</b> 只擦掉 k 這個方向，<b>βvkᵀ</b> 寫入新值。",
+    "更新的成本是一次固定維度的矩陣運算 O(d_k·d_v)。",
+    "Mamba2 只有 α，DeltaNet 只有 delta。Gated DeltaNet 兩個都有。"], accent="ssm")
+
+note("""
+<p><b>一個容易誤解的地方</b>：state 裡面<b>沒有</b>一份「key1、key2、key3」的清單。
+它只有一個矩陣。所謂「更新和 apple 有關的方向」，數學上是一次 outer product
+（v 是 128×1、k 是 1×128，乘出來就是 128×128），很多甚至全部的矩陣元素都會被改到。</p>
+<p>但這是<b>一次矩陣運算</b>，不是迴圈掃過舊資料。所以複雜度是 O(d_k·d_v)，與 T 無關。
+這跟 attention 的 O(T·d) 是完全不同的 scaling。</p>
+""")
+
+h3("三種記憶：Attention、GDN、SSM", "memory-kinds")
+
+p("Attention、GDN、SSM 都在回答同一個問題：過去 token 的資訊要怎麼帶到現在。",
+  "差別只在「怎麼存」。", cite("gdn", "mamba"))
+
+figure("memkinds", F5.fig_memory_kinds(), 4, [
+    "三者都在回答同一個問題：怎麼把過去 token 的資訊帶到現在。",
+    "<b>Attention</b> 像檔案櫃：每個 token 一份文件，全部留著，查詢時掃過全部。",
+    "<b>GDN</b> 像可擦寫的白板：把 key→value 的關聯壓進一個固定大小的矩陣。"
+    "<b>SSM</b> 像腦中的狀態：不記逐字逐句，只更新理解。",
+    "差別在長 context 時最明顯。",
+    "所以 3:1 的排列很合理：GDN 提供便宜的壓縮記憶，attention 補回精確查找。"],
+    "假設 context 裡有「Frank 最喜歡的數字是 721938」，過了 150K token 再問一次："
+    "attention 那份 K/V 還原封不動地在，GDN 的則可能已經被後面的 token 蓋掉。", accent="ssm")
+
+table(["", "Attention", "Gated DeltaNet", "SSM / Mamba"], [
+    ["保存什麼", "每個歷史 token 的 K、V", "壓縮後的 associative state", "recurrent hidden state"],
+    ["cache 名稱", "KV cache", "state cache", "state cache"],
+    ["隨 context 成長", "<span class='tagc r'>會</span>",
+     "<span class='tagc g'>不會</span>", "<span class='tagc g'>不會</span>"],
+    ["精確回查歷史", "<span class='tagc g'>強</span>",
+     "<span class='tagc m'>較難</span>", "<span class='tagc m'>較難</span>"],
+    ["decode 每 token", "O(T·d)", "O(d_k·d_v)", "O(d·n)"],
+    ["prefill", "O(T²·d)", "O(T·d_k·d_v)", "O(T·d·n)"],
+    ["state 的數學性質", "token-level 明細", "associative memory（key→value）",
+     "動態系統的內部狀態"],
+], "compact")
+
+p("GDN 與 SSM 常被混為一談。它們確實都是「固定大小的 recurrent state」，",
+  "但 state 的含義不同。GDN 的 state 比較像一個壓縮過的 key→value 字典，用 q 去查（o = S·q）；",
+  "SSM 的 state 是動態系統的內部狀態（h_t = A·h_{t−1} + B·x_t），不是字典。",
+  "Mamba 的貢獻是讓 A、B 隨輸入動態改變，模型因此可以學「這個 token 重要，留著」。",
+  cite("mamba"))
+
+note("""
+<h4>一個好用的比喻：fast weights</h4>
+<p>模型權重是 slow weights，整個推論過程都不變。GDN 的 state 是 fast weights，
+每個 token 都在改。</p>
+<p>o = S·q 看起來就像一個 linear layer，只是那個「權重」在 decode 過程中一直被改寫。
+從這個角度看，GDN 等於在模型裡放了一個小型、可即時更新的神經網路。</p>
+""", "spec")
+
+note("""
+<h4>但 O(1) 不等於快</h4>
+<p>GDN 的 O(1) 是<b>對 context 長度</b>而言，不代表計算量小。
+每個 decode token 都要把整份 state 從 HBM 讀出來、改完再寫回去。</p>
+<p>27B 的 recurrent state 是 144 MiB。低 batch 的 GDN decode 一樣可能是
+memory-bandwidth-bound。<b>演算法複雜度不等於 GPU 瓶頸</b>，這是看 inference
+最該記住的一件事。</p>
+""", "warn")
 
 h3("兩種 cache 要同步前進", "two-caches")
 
@@ -590,7 +811,7 @@ figure("accept", F3.fig_accept(), 4, [
     "報酬遞減：α = 0.80 時，k 從 7 加到 15，τ 只多 15%，但驗證成本翻倍。",
     "實測參考：DFlash2 在 27B 上的接受長度是 4.4–5.5，對應 α ≈ 0.80–0.86。"],
     "這個式子假設每個位置的接受率相同，所以它是樂觀估計。"
-    "真正的 τ 要從引擎的 acceptance metrics 讀。", accent="spec")
+    "實際的 τ 要從引擎的 acceptance metrics 讀。", accent="spec")
 
 h3("(k+1)× 的 token 撞上屋頂線", "spec-roofline")
 
@@ -711,6 +932,84 @@ figure("lat", F4.fig_latency(), 7, [
 
 p("為什麼要這麼囉唆？因為容量數字之所以會被吵，多半不是量錯，",
   "而是兩邊講的指標、百分位或量測窗根本不一樣。", cite("bench"))
+
+h3("高併發時，每個指標往哪邊跑", "highload")
+
+p("在講怎麼測之前，先把「併發一上來會發生什麼」講清楚。四個指標不會一起變好或一起變壞，",
+  "而且它們的方向可以推導，不用試。")
+
+table(["指標", "併發上升時", "為什麼"], [
+    ["<b>TTFT</b>", "<span class='tagc r'>急速惡化</span>",
+     "排隊時間 = 前面還有幾個人 ÷ 完成率。超過 max_num_seqs 之後，多出來的人只能等，"
+     "而且等待時間隨排隊人數線性成長。"],
+    ["<b>ITL / TPOT</b>", "<span class='tagc m'>先平、後線性上升</span>",
+     f"每個 step 的 token 數 = running × (k+1)。低於 N* ≈ {KNEE:.0f} 時 step 時間不變，"
+     "所以 ITL 是平的；越過之後才開始線性成長。"],
+    ["<b>E2EL</b>", "<span class='tagc m'>跟著 TTFT 走</span>",
+     "E2E = TTFT + 輸出長度 × TPOT。輸出長時 TPOT 那項主導，輸出短時 TTFT 主導。"],
+    ["<b>整機 tok/s</b>", "<span class='tagc g'>上升後飽和</span>",
+     "併發越高，同一次權重讀取被越多 token 分攤。到轉折點之後就飽和。"],
+    ["<b>Goodput</b>", "<span class='tagc r'>先升後崩</span>",
+     "throughput 還在漲的時候，可能已經沒有人滿足 SLO 了。過載時 goodput 直接歸零。"],
+], "compact")
+
+note(f"""
+<p>順序記起來：<b>TTFT 最先壞、ITL 其次、throughput 最後才飽和、goodput 會突然歸零。</b></p>
+<p>最反直覺的是 ITL 那一列。它不會一路變差；在屋頂線轉折點之前幾乎不動。
+27B 的 N* 是 {KNEE:.0f} token/step，所以在併發 48（240 token/step）之前，
+加人幾乎不影響打字速度。</p>
+""", "key")
+
+h3("max_num_seqs 掐 48 還是 96", "maxseqs")
+
+p("這是最常被問的調參問題，而且它有一個可以算的答案。",
+  "情境：27B FP8、128 個人同時上門、in 2048 / out 512。")
+
+figure("conc", F5.fig_concurrency("q38"), 6, [
+    "橫軸是 max_num_seqs，三條線各自正規化後疊在一起看趨勢。",
+    "<b>TTFT</b>（藍）：掐得越小，排隊的人越多，TTFT 越差。",
+    "<b>ITL / TPOT</b>（橘）：掐小反而比較好，因為每個 step 的 token 數還在屋頂線左邊。",
+    "<b>整機 tok/s</b>（綠）：跟著併發上升，到轉折點之後飽和。",
+    "紅色虛線就是 tok/step 越過 N* 的位置。ITL 從那裡才開始爬。",
+    "右邊是 48 與 96 的直接對照。",
+    "所以掐小 max_num_seqs 是一筆交易，不是最佳化。"], accent="mem")
+
+table(["~max_num_seqs", "~跑 / 排隊", "~tok/step", "~瓶頸", "~ITL", "~TTFT", "~E2E",
+       "~整機 tok/s"],
+      [[str(r["max_seqs"]), f'{r["running"]:.0f} / {r["queued"]:.0f}',
+        f'{r["tokens_per_step"]:.0f}',
+        ("<span class='tagc m'>算力</span>" if r["bound"] == "compute"
+         else "<span class='tagc g'>頻寬</span>"),
+        f'{r["tpot_ms"]:.2f} ms',
+        (f'{r["ttft_ms"]/1000:.2f} s' if r["ttft_ms"] >= 1000 else f'{r["ttft_ms"]:.0f} ms'),
+        f'{r["e2e_s"]:.2f} s', f'{r["tokens_per_s"]:,.0f}']
+       for r in M.sweep_max_seqs(Q38, 128, candidates=(16, 32, 48, 64, 96, 128))],
+      "compact", hi=(2, 4))
+
+p("所以直覺是對的：<b>掐小確實會讓 ITL 變短，也確實會因為強制排隊讓 TTFT 變長。</b>",
+  "48 的 ITL 是 3.50 ms、96 是 5.74 ms；但 48 的 TTFT 是 3.08 秒、96 只有 1.02 秒。")
+
+p("不過還要看另外兩欄。在固定負載下，這筆交易其實是<b>虧的</b>：",
+  "只有 ITL 一項變好，TTFT、E2E 與整機吞吐三項都變差。",
+  "把 max_num_seqs 開到 128（讓所有人都進場）反而樣樣最好，只有 ITL 漲到 7.66 ms。")
+
+note("""
+<h4>那什麼時候該掐？三個正當理由</h4>
+<p><b>① 記憶體。</b>max_num_seqs × 每序列 cache 不能超過預算，否則會不斷 preempt。
+這是硬限制，不是取捨。</p>
+<p><b>② ITL 是主要 SLO。</b>串流體驗掛帥、而且你願意用 TTFT 去換。</p>
+<p><b>③ 保護已經進場的人。</b>與其讓所有人一起慢慢變差，不如限制併發，
+讓進場的人有可預測的品質。這是 admission control 的邏輯，跟效能無關。</p>
+""", "key")
+
+widget("serve", "自己拉人數與 max_num_seqs 看四個指標往哪邊跑。"
+                "封閉式穩定態近似，沒有擬合參數，但也不含 attention kernel 與排程開銷，"
+                "實測會更慢。用它看趨勢與轉折位置，不要看絕對值。")
+
+p("幾個值得自己試的組合：把人數拉到 256，你會發現不管怎麼調 max_num_seqs，",
+  "TTFT 都回不去了；這時候該加卡，不是調參數。打開 speculative decoding，",
+  "ITL 會大幅下降但 tok/step 暴增，很快撞上屋頂線。把輸出長度改成 128，",
+  "TTFT 在 E2E 裡的佔比變高，max_num_seqs 的影響會更明顯。")
 
 h3("兩階段測試", "twostage")
 
@@ -858,8 +1157,8 @@ p("刻意沒有涵蓋的主題：訓練與微調、多模態的容量影響、P/
 note(f"""
 <p><b>建議的下一步</b>　用 PART 08 的兩階段流程對兩個模型各跑一次基準測試，
 把結果填回 PART 06 與 PART 07 的試算器，看看解析模型與實測差多少。</p>
-<p>解析上限通常是實測的 1.7–3 倍。知道自己的比例之後，這些試算器就變成很好用的
-快速估算工具 —— 換設定時先估一次，再決定要不要花時間實測。</p>
+<p>解析上限通常是實測的 1.7–3 倍。知道自己的比例之後，這些試算器就變成很好用的快速估算工具。
+換設定時先估一次，再決定要不要花時間實測。</p>
 """, "key")
 
 # ============================================== 附錄 =====================

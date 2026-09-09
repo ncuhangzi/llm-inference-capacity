@@ -23,6 +23,8 @@
     "little-slider": "ok",
     "sweep1": "ok",
     "sweep2": "ok",
+    "serve-maxseqs-slider": "ok",
+    "serve-shows-bound": "ok",
     "js-kv-12KiB": "ok",
     "js-ssm-144MiB": "ok",
     "js-knee-292": "ok",

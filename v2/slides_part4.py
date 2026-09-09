@@ -62,6 +62,93 @@ slide("四個指標的精確定義", "以及各自的陷阱",
 <p>「開了 spec 之後 ITL 變雙峰」這件事值得強調：如果 SLO 寫的是「p99 ITL &lt; 50 ms」，
 開了 spec 之後可能反而不合格，即使使用者感受更好。這時要把 SLO 改寫成 TPOT。</p>""")
 
+slide("高併發時，每個指標各自怎麼動", "同一台機器，128 個人同時上門",
+      sources=["anat", "bench"], accent="mem", body=f"""
+{gist("四個指標不會一起變好或一起變壞。併發一上來，它們會往不同方向跑，而且方向是可以推導的。")}
+{table(["指標", "併發上升時", "為什麼", "先撐不住的是"], [
+ [f"<b>{T('TTFT')}</b>", "<span class='tagc r'>急速惡化</span>",
+  "排隊時間 = 前面還有幾個人 ÷ 完成率。超過 max_num_seqs 之後，多出來的人只能等，"
+  "而且等待時間隨排隊人數線性成長。", "<b>它</b>。系統過載時 TTFT 一定最先爆"],
+ [f"<b>{T('ITL')} / {T('TPOT')}</b>", "<span class='tagc m'>先平、後線性上升</span>",
+  f"每個 step 的 token 數 = running × (k+1)。低於 N* ≈ {KNEE:.0f} 時 step 時間不變，"
+  "所以 ITL 是平的；越過之後 step 時間開始隨 token 數線性成長。", "越過屋頂線轉折點之後"],
+ [f"<b>{T('E2EL')}</b>", "<span class='tagc m'>跟著 TTFT 走</span>",
+  "E2E = TTFT + 輸出長度 × TPOT。輸出長時 TPOT 那項主導，輸出短時 TTFT 主導。", "看輸出長度"],
+ ["<b>整機 tok/s</b>", "<span class='tagc g'>上升後飽和</span>",
+  "併發越高，同一次權重讀取被越多 token 分攤。到轉折點之後就飽和，再加也不會更多。",
+  "飽和之後只剩延遲在漲"],
+ [f"<b>{T('Goodput')}</b>", "<span class='tagc r'>先升後崩</span>",
+  "throughput 還在漲的時候，可能已經沒有人滿足 SLO 了。過載時 goodput 會直接歸零。",
+  "這才是真正要盯的那條"],
+], "compact")}
+{take(f"排序記起來：<b>TTFT 最先壞、ITL 其次、throughput 最後才飽和、goodput 會突然歸零</b>。"
+      f"只看 throughput 會讓你以為系統還很健康。")}
+<div class="cols w6-4" style="margin-top:2px">
+ {pane("數字長什麼樣（27B FP8、in 2048 / out 512、128 人同時上門）", table(
+   ["~max_num_seqs", "~跑 / 排隊", "~tok/step", "~瓶頸", "~ITL", "~TTFT", "~整機 tok/s"],
+   [[str(r["max_seqs"]), f'{r["running"]:.0f} / {r["queued"]:.0f}',
+     f'{r["tokens_per_step"]:.0f}',
+     ("<span class='tagc m'>算力</span>" if r["bound"] == "compute"
+      else "<span class='tagc g'>頻寬</span>"),
+     f'{r["tpot_ms"]:.2f} ms',
+     (f'{r["ttft_ms"]/1000:.2f} s' if r["ttft_ms"] >= 1000 else f'{r["ttft_ms"]:.0f} ms'),
+     f'{r["tokens_per_s"]:,.0f}']
+    for r in M.sweep_max_seqs(Q38, 128, candidates=(16, 32, 48, 64, 96, 128))],
+   "compact", hi=(2, 4)))}
+ {pane("兩個轉折點", f'''<p style="font-size:13.2px"><b>48 → 64</b> 之間，tok/step 從 240 跨到 320，
+ 越過 N* = {KNEE:.0f}。ITL 從這裡開始爬。</p>
+ <p style="font-size:13.2px"><b>96 → 128</b> 之間，排隊的人歸零。TTFT 從 1 秒掉到 31 ms，
+ 但 ITL 已經漲到 7.66 ms。</p>
+ <p style="font-size:13.2px;color:var(--mut)">兩個轉折的位置都可以事先算，不用試。</p>''', "mem")}
+</div>""",
+      notes=f"""<p>這一頁把四個指標的「變化方向」講清楚，下一頁再用模擬器把數字算出來。</p>
+<p>最關鍵的是 ITL 那一列。它<b>不會</b>一路變差；在屋頂線轉折點之前幾乎不動。
+27B 的 N* 是 {KNEE:.0f} token/step，所以在併發 48（240 token/step）之前，
+加人幾乎不影響打字速度。這跟很多人的直覺相反。</p>
+<p>另一個實務提醒：TTFT 包含排隊，TPOT 不包含。所以系統過載時，
+已經進場的人可能感覺一切正常（TPOT 沒變），但門外排隊的人等到天荒地老。
+只監控 TPOT 會完全看不到這件事。</p>""")
+
+slide("max_num_seqs 該掐多少", f"128 個人上門，48 對 96 的差別",
+      sources=["anat", "bench"], accent="mem", body=f"""
+{gist("掐小它，唯一真正變好的是 ITL；代價是更多人在門外排隊，TTFT、E2E 與吞吐全部變差。")}
+{fig("conc", F5.fig_concurrency("q38"), 6, [
+ "橫軸是 max_num_seqs，三條線各自正規化後疊在一起看趨勢。",
+ "<b>TTFT</b>（藍）：掐得越小，排隊的人越多，TTFT 越差。",
+ "<b>ITL / TPOT</b>（橘）：掐小反而比較好，因為每個 step 的 token 數還在屋頂線左邊。",
+ "<b>整機 tok/s</b>（綠）：跟著併發上升，到轉折點之後飽和。",
+ "紅色虛線就是 tok/step 越過 N* 的位置。ITL 從那裡才開始爬。",
+ "右邊是 48 與 96 的直接對照。",
+ "所以掐小 max_num_seqs 是一筆<b>交易</b>，不是最佳化。"], accent="mem")}""",
+      notes=f"""<p>把數字唸一次（27B FP8、128 人、in 2048 / out 512）：</p>
+<p><b>max_num_seqs = 48</b>：48 個在跑、80 個排隊。每 step 240 個 token，還在
+memory-bound 區，所以 ITL 停在 3.50 ms 的地板。但 TTFT 是 3.08 秒。<br>
+<b>max_num_seqs = 96</b>：96 個在跑、32 個排隊。每 step 480 個 token，
+已經越過 N* = {KNEE:.0f}，變成 compute-bound，ITL 漲到 5.74 ms。
+但 TTFT 只有 1.02 秒，E2E 從 4.87 秒降到 3.96 秒，吞吐從 13,728 漲到 16,718 tok/s。</p>
+<p>所以你的直覺是對的：<b>掐小確實會讓 ITL 變短，也確實會因為強制排隊讓 TTFT 變長。</b>
+但要注意，這筆交易在固定負載下是<b>虧的</b>：只有 ITL 一項變好，其他三項都變差。</p>
+<p>那什麼時候該掐？三個正當理由：<br>
+① <b>記憶體</b>：max_num_seqs × 每序列 cache 不能超過預算，否則會不斷 preempt。這是硬限制。<br>
+② <b>ITL 是主要 SLO</b>：串流體驗掛帥、而且你願意用 TTFT 去換。<br>
+③ <b>保護已進場的人</b>：與其讓所有人一起慢慢變差，不如限制併發，
+讓進場的人有可預測的品質。這是 admission control 的邏輯。</p>""")
+
+slide("自己模擬一次高併發", "拉人數與 max_num_seqs，看四個指標往哪邊跑",
+      sources=["anat", "bench"], accent="mem", body=f"""
+{gist("同一個模型、同一組 workload，只改 max_num_seqs，就能看出 TTFT 與 ITL 是一組蹺蹺板。")}
+{widget("serve")}""",
+      notes=f"""<p>建議的操作順序：</p>
+<p>① 預設（27B、128 人、max_num_seqs 48）→ 看 TTFT 3 秒、ITL 3.5 ms。<br>
+② 把 max_num_seqs 拉到 128 → TTFT 掉到 31 ms，但 ITL 漲到 7.66 ms。<br>
+③ 把人數拉到 256 → 不管怎麼調，TTFT 都回不去了。這時候該加卡，不是調參數。<br>
+④ 打開 speculative decoding → 看 ITL 大幅下降，但 tok/step 暴增，
+很快就撞上屋頂線。<br>
+⑤ 把輸出長度改成 128（短回覆）→ TTFT 在 E2E 裡的佔比變高，
+這時 max_num_seqs 的影響更明顯。</p>
+<p>模型的假設寫在圖下方。它沒有擬合參數，但也不含 attention kernel、
+排程與通訊開銷，所以實測會比它慢。用它看<b>趨勢與轉折位置</b>，不要看絕對值。</p>""")
+
 slide("百分位與 goodput", "平均值會騙人，goodput 才是使用者拿到的服務",
       sources=["gp", "bench"], accent="compute", body=f"""
 {gist("系統過載時 throughput 可能還很高，但沒有一個人滿足 SLO，此時 goodput = 0。")}

@@ -14,9 +14,9 @@
 
 | 我想… | 開這個 | 大小 |
 | --- | --- | --- |
-| **快速讀懂**（30–40 分鐘，長文＋可互動圖表） | [`LLM推論技術部落格.html`](LLM推論技術部落格.html) | 330 KB |
-| **上台講**（82 頁投影片，逐步動畫、講稿、目錄） | [`LLM推論報告_v2.html`](LLM推論報告_v2.html) | 1.2 MB |
-| **列印或傳給人** | [`LLM推論報告_v2.pdf`](LLM推論報告_v2.pdf) | 4.3 MB |
+| **快速讀懂**（40–50 分鐘，長文＋可互動圖表） | [`LLM推論技術部落格.html`](LLM推論技術部落格.html) | 400 KB |
+| **上台講**（91 頁投影片，逐步動畫、講稿、目錄） | [`LLM推論報告_v2.html`](LLM推論報告_v2.html) | 1.3 MB |
+| **列印或傳給人** | [`LLM推論報告_v2.pdf`](LLM推論報告_v2.pdf) | 4.6 MB |
 
 ```bash
 git clone https://github.com/ncuhangzi/llm-inference-capacity.git
@@ -108,9 +108,10 @@ serving 上的所有最佳化，都是在提高「每次讀取分攤到的 token
 需要 Python 3.11+；要重新產生 PDF 與截圖才需要 Node 和 Playwright。
 
 ```bash
-# 1. 抓官方 config 與 safetensors 索引（會寫進 research/）
+# 1. 抓官方 config、safetensors 索引與 tokenizer（會寫進 research/）
 python research/fetch_more.py
 python research/summarize_weightmap.py
+python research/tokenize_demo.py   # 需要 pip install regex
 
 # 2. 解析模型的自我檢查：參數量、cache、roofline、speculative decoding
 python v2/model.py
@@ -121,7 +122,7 @@ python v2/build.py     # → LLM推論報告_v2.html + 講者筆記_v2.md
 
 # 4.（選用）逐頁截圖、版面溢出檢查、輸出 PDF
 node v2/qa.cjs --pdf
-node v2/interact.cjs   # 27 項互動與數值一致性測試
+node v2/interact.cjs   # 29 項互動與數值一致性測試
 ```
 
 `python v2/model.py` 會印出所有推導結果，並跟 checkpoint 的實際位元組數比對：
@@ -156,7 +157,8 @@ v2/
   figs_arch.py             CH3–CH4 的圖：vLLM 堆疊、架構、MoE、Gated DeltaNet
   figs_spec.py             CH5–CH7 的圖：量化位元佈局、weight map、speculative decoding
   figs_load.py             CH8–CH10 的圖：延遲、負載測試、決策樹
-  widgets.js               6 個互動試算器
+  figs_new.py              tokenizer 實例、causal mask、lm_head、mixer 分工、高併發
+  widgets.js               7 個互動試算器（含高併發 / max_num_seqs 模擬器）
   common.py                來源清單、名詞表（47 條）、版面工具
   template.html            簡報的樣式與播放引擎（1440×810 固定畫布）
   blog_template.html       部落格的樣式與播放引擎
@@ -167,7 +169,8 @@ v2/
   humanize*.py             文字修潤的改寫表（一次性腳本，已套用）
   qa.cjs / interact.cjs    版面溢出檢查、PDF 輸出、27 項互動測試
 
-research/                  官方 config、safetensors 統計、weight map 摘要
+research/                  官方 config、safetensors 統計、weight map 摘要、
+                           tokenize_demo.py（用官方 tokenizer 實跑 BPE）
 qa2/                       QA 結果（截圖用 .gitignore 排除，重跑 qa.cjs 會回來）
 archive/v1/                第一版（ChatGPT 產出），保留供對照
 archive/dark-v1/           更早的深色版本

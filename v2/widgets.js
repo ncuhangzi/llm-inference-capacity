@@ -266,6 +266,86 @@ spec(el){
   render(); return {print:render};
 },
 
+/* ================================ 4b. 高併發模擬：max_num_seqs 的取捨 ==== */
+serve(el){
+  const out=document.createElement('div');
+  const st=ctl(el,[
+    {type:'seg',key:'m',label:'模型',value:'q38',
+     opts:[['q38','27B FP8'],['q35','122B NVFP4'],['q332','32B BF16']]},
+    {type:'seg',key:'sd',label:'speculative',value:'0',opts:[['0','關'],['1','開']]},
+    {key:'users',label:'同時上門的人數',min:8,max:512,step:8,value:128,fmt:v=>v},
+    {key:'cap',label:'max_num_seqs',min:8,max:512,step:8,value:48,fmt:v=>v},
+    {key:'inl',label:'平均輸入長度',min:256,max:16384,step:256,value:2048,fmt:v=>f0(v)},
+    {key:'outl',label:'平均輸出長度',min:64,max:2048,step:64,value:512,fmt:v=>f0(v)},
+  ],render); el.appendChild(out);
+
+  function sim(m,users,cap,inl,outl,k,tau){
+    const B=Math.max(1,Math.min(users,cap)), queued=Math.max(0,users-B);
+    const need=B*tau*inl/outl;
+    const P=Math.min(need,Math.max(0,8192-B*(k+1)));
+    const n=B*(k+1)+P;
+    const tMem=stepBytes(m,n)/HW.bw, tCmp=n*m.tokenCompute, t=Math.max(tMem,tCmp);
+    const tpot=t/tau, dec=outl*tpot, pre=(inl/Math.max(P,1e-9))*t;
+    const svc=pre+dec, rate=B/svc, q=queued/rate;
+    return {B,queued,n,t,tMem,tCmp,bound:tCmp>tMem?'算力':'頻寬',
+            tpot:tpot*1e3,ttft:(q+pre)*1e3,queue:q*1e3,pre:pre*1e3,
+            e2e:q+pre+dec,tps:B*tau/t,rate};
+  }
+  function render(){
+    const m=MODELS[st.m], sd=st.sd==='1'&&m.specK>0;
+    const k=sd?m.specK:0, tau=sd?m.tau:1;
+    const r=sim(m,st.users,st.cap,st.inl,st.outl,k,tau);
+    const cands=[8,16,24,32,48,64,96,128,192,256];
+    const rows=cands.map(c=>({c,...sim(m,st.users,c,st.inl,st.outl,k,tau)}));
+    const mxT=Math.max(...rows.map(x=>x.ttft)), mxP=Math.max(...rows.map(x=>x.tpot));
+    const mxG=Math.max(...rows.map(x=>x.tps));
+    out.innerHTML=`
+     <div class="stats" style="margin-top:10px">
+      <div class="stat b"><div class="v">${f0(r.B)}<small>/ ${f0(st.users)}</small></div>
+        <div class="k">同時在跑 / 上門人數　排隊 ${f0(r.queued)} 人</div></div>
+      <div class="stat ${r.bound==='算力'?'m':'g'}"><div class="v" style="font-size:21px">${f0(r.n)} tok/step</div>
+        <div class="k">瓶頸在<b>${r.bound}</b>（N* ≈ ${f0(HW.knee)}）</div></div>
+      <div class="stat s"><div class="v">${f2(r.tpot)}<small>ms</small></div>
+        <div class="k">ITL / TPOT：使用者看到的打字速度</div></div>
+      <div class="stat p"><div class="v">${r.ttft>=1000?f2(r.ttft/1000)+'s':f0(r.ttft)+'ms'}</div>
+        <div class="k">TTFT＝排隊 ${f0(r.queue)} ms ＋ prefill ${f0(r.pre)} ms</div></div>
+     </div>
+     <div class="stats" style="margin-top:12px">
+      <div class="stat e"><div class="v">${f2(r.e2e)}<small>s</small></div>
+        <div class="k">E2E：使用者實際等待的總時間</div></div>
+      <div class="stat g"><div class="v">${f0(r.tps)}<small>tok/s</small></div>
+        <div class="k">整機輸出（解析上限）</div></div>
+      <div class="stat n"><div class="v">${f2(r.rate)}<small>req/s</small></div>
+        <div class="k">穩定態完成率</div></div>
+      <div class="stat n"><div class="v">${f0(r.tMem/r.t*100)}<small>%</small></div>
+        <div class="k">頻寬佔用（另一側是算力 ${f0(r.tCmp/r.t*100)}%）</div></div>
+     </div>
+     <div style="margin-top:14px">
+      <div class="legend" style="margin-bottom:7px">
+       <span><i style="background:var(--compute)"></i>TTFT</span>
+       <span><i style="background:var(--mem)"></i>ITL / TPOT</span>
+       <span><i style="background:var(--ok)"></i>整機 tok/s</span>
+       <span style="color:var(--mut2)">灰底 = 目前選的 max_num_seqs</span></div>
+      <div style="display:flex;gap:4px;align-items:flex-end;height:120px">
+       ${rows.map(x=>`<div style="flex:1;display:flex;flex-direction:column;
+          justify-content:flex-end;gap:2px;height:100%;
+          background:${x.c===st.cap?'#eef1f5':'transparent'};border-radius:5px;padding:3px 2px">
+         <div style="display:flex;gap:2px;align-items:flex-end;height:88px">
+          <div style="flex:1;height:${x.ttft/mxT*100}%;background:var(--compute);border-radius:2px 2px 0 0"></div>
+          <div style="flex:1;height:${x.tpot/mxP*100}%;background:var(--mem);border-radius:2px 2px 0 0"></div>
+          <div style="flex:1;height:${x.tps/mxG*100}%;background:var(--ok);border-radius:2px 2px 0 0"></div>
+         </div>
+         <span class="hint" style="font-size:10px;text-align:center">${x.c}</span></div>`).join('')}
+      </div>
+     </div>
+     <div class="hint" style="margin-top:9px">封閉式穩定態近似：running = min(上門人數, max_num_seqs)，
+      其餘排隊；每個 step 撥給 prefill 的 token 數由「進來的人 = 出去的人」決定；
+      step 時間走 roofline。沒有擬合參數，每個數字都可以手算驗證，但也不含 attention kernel、
+      排程與通訊開銷，實測會更慢。</div>`;
+  }
+  render(); return {print:render};
+},
+
 /* ======================================= 5. RPS → 服務人數（Little's Law）*/
 little(el){
   const out=document.createElement('div');

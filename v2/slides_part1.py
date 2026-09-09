@@ -75,31 +75,31 @@ slide("報告路線", "從一個 token 的產生，一路推到「能服務幾�
  <a data-go="3"><b>01</b><span class="nm">一個 token 是怎麼生出來的</span>
    <span class="ds">autoregressive、KV cache、GQA、prefill vs decode，最後導出 B200 的屋頂線轉折點</span>
    <span class="mn">8 分</span></a>
- <a data-go="11"><b>02</b><span class="nm">vLLM 把它變成一個服務</span>
+ <a data-go="15"><b>02</b><span class="nm">vLLM 把它變成一個服務</span>
    <span class="ds">執行堆疊、continuous batching、PagedAttention、每一輪排程實際在做什麼</span>
    <span class="mn">7 分</span></a>
- <a data-go="20"><b>03</b><span class="nm">三個模型的架構帳本</span>
+ <a data-go="24"><b>03</b><span class="nm">三個模型的架構帳本</span>
    <span class="ds">純 Transformer、hybrid dense、hybrid MoE；參數如何逐張量驗證</span>
    <span class="mn">10 分</span></a>
- <a data-go="27"><b>04</b><span class="nm">Gated DeltaNet：用固定狀態換掉 KV cache</span>
+ <a data-go="31"><b>04</b><span class="nm">Gated DeltaNet：用固定狀態換掉 KV cache</span>
    <span class="ds">state update 的數學、hybrid 的 3:1 排列、vLLM 怎麼同時管兩種 cache</span>
    <span class="mn">10 分</span></a>
- <a data-go="34"><b>05</b><span class="nm">量化：NVFP4 與 FP8</span>
+ <a data-go="40"><b>05</b><span class="nm">量化：NVFP4 與 FP8</span>
    <span class="ds">位元佈局、checkpoint 實際量化了哪些張量、精度代價、為什麼轉折點不會移動</span>
    <span class="mn">8 分</span></a>
- <a data-go="40"><b>06</b><span class="nm">單卡記憶體帳本</span>
+ <a data-go="46"><b>06</b><span class="nm">單卡記憶體帳本</span>
    <span class="ds">KV cache 與 SSM state 分開算、交會點、B200 180 GB 怎麼分、併發上限</span>
    <span class="mn">10 分</span></a>
- <a data-go="47"><b>07</b><span class="nm">Speculative decoding 對 serving 的影響</span>
+ <a data-go="53"><b>07</b><span class="nm">Speculative decoding 對 serving 的影響</span>
    <span class="ds">MTP 與 DFlash2 的機制差異、接受長度、(k+1)× 撞屋頂線、什麼時候該關掉</span>
    <span class="mn">12 分</span></a>
- <a data-go="59"><b>08</b><span class="nm">延遲指標的定義與陷阱</span>
+ <a data-go="65"><b>08</b><span class="nm">延遲指標的定義與陷阱</span>
    <span class="ds">TTFT / TPOT / ITL / E2EL、百分位、goodput</span>
    <span class="mn">6 分</span></a>
- <a data-go="63"><b>09</b><span class="nm">兩階段負載測試</span>
+ <a data-go="72"><b>09</b><span class="nm">兩階段負載測試</span>
    <span class="ds">閉環找飽和、開環找 SLO 容量、邊界搜尋、RPS 換算人數</span>
    <span class="mn">12 分</span></a>
- <a data-go="70"><b>10</b><span class="nm">結論與調校決策樹</span>
+ <a data-go="79"><b>10</b><span class="nm">結論與調校決策樹</span>
    <span class="ds">十個可以帶走的結論，加一張「該轉哪個旋鈕」的流程圖</span>
    <span class="mn">5 分</span></a>
 </div>""",
@@ -126,31 +126,48 @@ B200 上的屋頂線轉折點。</div>
 </ul>""",
       notes="<p>章節頁停 15 秒就好，把最後一行的 N* 唸出來讓聽眾記住。</p>")
 
-slide("模型真正看到的是一串 id", "長度 T 決定 prefill 的計算量與 KV cache 的大小",
-      sources=["c38"], body=f"""
-{gist("使用者打了 13 個中文字，模型看到的可能是 20 幾個 token。容量計算的分母是這個 T，不是字數。")}
-{fig("tokenize", F1.fig_tokenize(), 3, [
- "使用者輸入一段文字。",
- "<b>① tokenizer</b> 把文字切成 token 並轉成整數 id。中文常見 1–2 字一個 token，"
- "英文約 4 個字元一個 token。",
- "<b>② chat template</b> 再包上角色標記與思考模式的開頭。Qwen3.5/3.8 預設開啟 thinking，"
- "會多出 <code>&lt;think&gt;</code> 這段。",
- "<b>③</b> 這串 id 的長度 T 才是實際的輸入長度。整份報告裡的「context 長度」都指這個 T。"])}
-<div class="cols w6-4" style="margin-top:2px">
- {pane("兩個模型的詞彙表一樣大", table(["模型", "~vocab_size", "~embedding 參數", "~BF16 佔用"], [
-   ["Qwen3.5-122B-A10B", f"{Q35.vocab:,}", f"{Q35.vocab*Q35.hidden/1e6:,.0f} M", f"{Q35.vocab*Q35.hidden*2/1e9:,.2f} GB"],
-   ["Qwen3.8-27B", f"{Q38.vocab:,}", f"{Q38.vocab*Q38.hidden/1e6:,.0f} M", f"{Q38.vocab*Q38.hidden*2/1e9:,.2f} GB"],
-   ["Qwen3-32B（對照）", f"{Q332.vocab:,}", f"{Q332.vocab*Q332.hidden/1e6:,.0f} M", f"{Q332.vocab*Q332.hidden*2/1e9:,.2f} GB"],
- ], "compact"))}
- {pane("為什麼要在意 vocab", '''<p style="font-size:13.5px">248,320 × hidden 的
- <code>lm_head</code> 是<b>每一個 decode step 都要完整讀一次</b>的張量。到 CH7 會看到，
- 這一塊主宰了 MTP 起草器的成本：起草一次的代價，幾乎就是再讀一次 lm_head。</p>''', "mem")}
-</div>""",
-      notes="""<p>這一頁要把「字數」與「token 數」分開。業務端談字數，容量計算用 token 數，
-中間差 1.5–2 倍很常見；再加上 chat template 與 thinking 標記，短問句的實際 prefill 長度
-往往是原文的兩倍以上。</p>
-<p>vocab 那張表先鋪梗：248,320 是個很大的詞彙表，lm_head 在 122B 上是 762.8 M 參數、
-BF16 佔 1.53 GB，而它在 NVFP4 checkpoint 裡<b>沒有被量化</b>。CH5 與 CH7 都會回來用這個事實。</p>""")
+slide("模型真正看到的是一串 id", "用官方 tokenizer 實際跑一次，id 都是真的",
+      sources=["tok", "c38"], body=f"""
+{gist("13 個中文字切成 8 個 token，加上 chat template 之後大約 20 個。容量計算的分母是這個數字，不是字數。")}
+{fig("tokenize", F5.fig_tokenize_real(), 4, [
+ "使用者打了 13 個中文字。",
+ "<b>① tokenizer</b> 用 BPE 把它切成 8 個 token，每個查表換成一個整數 id。"
+ "下面那排就是官方 tokenizer.json 跑出來的真實 id。",
+ "順帶一提：「修正」被切成「修」+「正是」。BPE 只看統計，不管詞的邊界。",
+ "<b>② chat template</b> 再包上角色標記。<code>&lt;|im_start|&gt;</code> = 248045、"
+ "<code>&lt;|im_end|&gt;</code> = 248046，也都是真的。",
+ "<b>③</b> 這串 id 的長度 T，才是報告裡所有公式的分母。"], accent="compute")}""",
+      notes="""<p>這一頁的 id 是用 <code>research/tokenize_demo.py</code> 拿官方
+tokenizer.json 的 vocab 與 merges 實作 byte-level BPE 跑出來的，不是編的，可以自己重跑。</p>
+<p>要把「字數」與「token 數」分開。業務端談字數，容量計算用 token 數。
+中文大約 1.6 字一個 token，英文大約 5.5 個字元一個 token；再加上 chat template
+與 thinking 標記，短問句的實際 prefill 長度往往是原文的兩倍。</p>
+<p>「修正」被切開這件事值得講：它說明 token 不是詞。有些看起來很短的 prompt，
+因為用字冷僻，token 數會比預期多很多。</p>""")
+
+slide("Vocabulary 與 lm_head", "為什麼那張 248,320 × hidden 的表，每一步都要整個讀完",
+      sources=["tok", "c35", "c38"], accent="mem", body=f"""
+{gist("embedding 是「用 id 找一列」，lm_head 是「對每一列都算一次內積」。同樣的形狀，成本差了幾千倍。")}
+{fig("lmhead", F5.fig_lmhead("q35"), 5, [
+ "最後一層算完，手上只有一個長度 3,072 的向量 h。",
+ "<b>lm_head</b> 把它投影成詞彙表那麼長的分數。",
+ "得到 248,320 個 logits，softmax 之後抽一個當作下一個 token。",
+ "算第 i 個分數要讀 W 的第 i 列。而 softmax 要對<b>全部</b> 248,320 個分數正規化，一個都不能少。",
+ "所以整張 [V × d] 都得讀。對照 embedding：同樣的形狀，但查表只讀一列。",
+ "batch B 的時候這 1.53 GB 只讀一次、被 B 個 token 分攤，又回到同一個屋頂線的故事。"])}""",
+      notes=f"""<p>這一頁專門回答三個常被問的問題。</p>
+<p><b>vocab 是什麼？</b>一張跨語言共用的對照表，但表裡的不是「詞」，
+而是 byte-level BPE 切出來的 subword。中文常見詞多半 1 個 token，英文常見字多半 1 個 token，罕見字才被拆開。
+Qwen3.8 的 BPE vocab 有 248,044 條，加 33 個特殊 token，共 248,077；
+config 宣告 248,320，中間那 243 個是 padding，把長度湊成 128 的倍數讓 kernel 好對齊。</p>
+<p><b>BF16 佔用怎麼算？</b>參數量 = V × d。122B：248,320 × 3,072 =
+{Q35.vocab*Q35.hidden:,} 個參數，每個 BF16 佔 2 bytes，
+所以 {Q35.vocab*Q35.hidden*2:,} bytes = {Q35.vocab*Q35.hidden*2/1e9:.2f} GB。
+embedding 與 lm_head 各一份（<code>tie_word_embeddings: false</code>），所以要乘 2。</p>
+<p><b>為什麼 lm_head 每步都要讀完？</b>因為 softmax 是對整個詞彙表做正規化。
+你不能只算「可能的那幾個字」的分數就抽樣，分母需要全部 248,320 個 logits。
+embedding 只是查表（O(1) 讀一列），lm_head 是矩陣乘法（讀滿 V 列）。
+這個不對稱就是 CH7 裡 MTP 起草器很貴的原因：每猜一個 token 就要再讀一次這 1.53 GB。</p>""")
 
 slide("Autoregressive：生 T 個 token 就要 T 次 forward", "decode 之所以慢，原因就在這裡",
       sources=["q3r", "anat"], body=f"""
@@ -191,6 +208,64 @@ Gated DeltaNet、CH3 把 channel mixer 換成 MoE，架構就從 Qwen3-32B 變�
 只有 token mixer 需要記憶體保存歷史，cache 的形狀就是這樣決定的。</p>
 <p>右側的張量形狀值得逐行唸：hidden 3072、Q 是 32×256、K/V 只有 2×256。
 Q 的總寬度 8192 比 hidden 還大，這是 Qwen3.5 的特色（head_dim 256 相當大）。</p>""")
+
+slide("兩種 mixer 各自解決一個問題", "「去哪裡拿資訊」與「拿到之後算出什麼」",
+      sources=["q3r", "gdn"], accent="moe", body=f"""
+{gist("Attention 負責通訊，FFN 負責運算。只有前者需要記憶體保存歷史，所以 cache 的形狀完全由它決定。")}
+{fig("mixers", F5.fig_mixers(), 5, [
+ "一層裡有兩個插槽，各自回答一個不同的問題。",
+ "<b>Token mixer</b> 跨位置搬運資訊；<b>Channel mixer</b> 在同一個位置內把 feature 重新組合。",
+ "舉個例子：The cat didn’t eat the fish because <b>it</b> was sick。"
+ "Attention 先把「cat 是動物」「是前句主詞」「sick」這些資訊搬到 it 這個位置。",
+ "然後 FFN 把它們組合成新的東西：「it 指的大概是 cat」。單純搬過來還不夠，要算。",
+ "所以有人用 Attention = communication、FFN = computation 這組對照來記。",
+ "換掉 token mixer，cache 的形狀就變了；換掉 channel mixer，只有算力與權重大小變。"],
+ accent="moe")}""",
+      notes="""<p>這個框架是後面所有架構討論的骨架。CH4 的 Gated DeltaNet 是在換 token mixer，
+CH3 的 MoE 是在換 channel mixer，兩者的成本結構完全不同。</p>
+<p>為什麼 channel mixer 有存在的必要？因為 attention 只會「搬」，不會「算」。
+如果一層裡只有 attention，你很會從各處收集資訊，但不擅長把收集到的東西
+轉成更抽象的表示。FFN 的每個 neuron 都是一個 feature detector：
+它對輸入的所有維度做加權組合，再過非線性，用來偵測「某種特定的 feature 組合有沒有出現」。</p>
+<p>另一個實務推論：channel mixer 不需要任何歷史 cache，所以 MoE 再大也不會增加
+每條序列的記憶體，只會增加權重。這解釋了 CH3 裡「MoE 省算力不省記憶體」那句話。</p>""")
+
+slide("Causal mask：為什麼舊 token 不用重算", "KV cache 之所以成立的前提",
+      sources=["q3r", "paged"], body=f"""
+{gist("未來的 token 不會改變過去 token 已經算好的 K/V。所以序列雖然每次 +1，但只有最後一列是新的。")}
+{fig("causal", F5.fig_causal(), 4, [
+ "Prefill 完 A B C 之後，causal attention 是一個下三角：每個位置只看得到自己與前面。",
+ "生出 D 之後，矩陣多了一列一行。",
+ "但左上角 A/B/C 那一整塊<b>完全沒變</b>。因為 A、B、C 不可能突然看得到 D。",
+ "所以只要算新增的那一列：Q_D × [K_A, K_B, K_C, K_D]。前面三列一個都不用重算。",
+ "KV cache 解決的是「不要重算歷史」。它<b>沒有</b>解決「現在的 query 還是得掃過全部歷史」。"])}""",
+      notes="""<p>這一頁是 KV cache 的理論基礎，第一版報告直接跳過了。</p>
+<p>核心那句話值得慢慢唸：<b>因為是 causal decoder，未來 token 的出現不會改變過去 token
+已經算好的 representation 與 K/V。</b>序列每次 +1，但不是整條序列都要重算。</p>
+<p>如果沒有這個性質（例如 encoder 的雙向 attention），KV cache 根本不可能存在，
+每生一個 token 就得把整條序列重跑一次，成本是 O(T²)。</p>
+<p>最後一步是常見的混淆點：很多人以為有了 KV cache，decode 的 attention 就變成 O(1)。
+不是。省掉的是「重算歷史 K/V」，沒省掉的是「拿現在的 Q 去查全部歷史 K/V」，那還是 O(T)。
+這也是為什麼長 context 的 decode 會越跑越慢。</p>""")
+
+slide("為什麼是 KV cache，不是 QKV cache", "Q 是一次性的問題，K/V 才是留給未來查的東西",
+      sources=["paged", "q3r"], accent="mem", body=f"""
+{gist("Q 問完就沒用了，歷史的 Q 永遠不會再被查詢；K 是可被查詢的索引，V 是查到之後要讀出來的內容。")}
+{fig("qkv", F5.fig_qkv_roles(), 4, [
+ "下一個 token E 進來的時候，它需要什麼？",
+ "<b>歷史的 Q 完全用不到。</b>Q_A 到 Q_D 問過的問題，跟 E 想問的無關。",
+ "但它需要全部的 K（去比對）與全部的 V（比對到之後讀出來）。",
+ "所以只有 K 和 V 要留著。這個命名其實很精準。",
+ "順帶把兩種 cache 的差別擺在一起：attention 是 append，GDN 是就地覆寫。"])}""",
+      notes="""<p>一組好用的對照：</p>
+<p>Q = 現在這個 token 想查什麼 → 用完丟掉<br>
+K = 以前的 token 留下的「可被搜尋的索引」 → 留著<br>
+V = 索引命中之後要讀出來的內容 → 留著</p>
+<p>這也解釋了 GQA 為什麼可行：不同的 Q head 就算共用同一組 K/V，
+因為 query 不同，算出來的 attention 分數還是不同。像同一個資料庫，
+不同的研究員問不同的問題。省的是「資料庫」，不是「問問題的能力」。</p>
+<p>最後那個對照（append vs 覆寫）是 CH4 的預告：這一個字的差別，
+就是 KV cache 隨 context 長大、而 SSM state 不會的全部原因。</p>""")
 
 slide("KV cache：把算過的東西存起來", "代價是記憶體隨 context 線性成長",
       sources=["paged", "q3r"], body=f"""

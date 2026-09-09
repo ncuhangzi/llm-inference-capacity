@@ -445,6 +445,50 @@ DeltaNet 只有定點替換 (I − βkkᵀ)，Gated DeltaNet 兩個都有，
 <p>實作上 α 由 <code>in_proj_a</code>、β 由 <code>in_proj_b</code> 產生，
 每個 value head 一個純量；<code>A_log</code> 與 <code>dt_bias</code> 是可學的偏置。</p>""")
 
+slide("Delta rule 的直覺", "為什麼不能只是「一直往上加」",
+      sources=["gdn", "gdnimpl"], accent="ssm", body=f"""
+{gist("寫進去之前先問一次「這個 key 現在存的是什麼」，只修正差額。這樣同一個 key 被更新兩次才不會疊在一起。")}
+{fig("delta", F5.fig_delta(), 6, [
+ "假設 memory 裡已經有「apple → red」，後來又出現「apple → green」。",
+ "最原始的 linear attention 只會一直累加，兩筆疊在一起，查 apple 會得到混合的東西。",
+ "Delta rule 的做法：先用 k 去查 state，看它現在記得什麼（red），算出誤差（green − red），"
+ "再只修正那個差額。",
+ "把完整式子拆開來看。",
+ "<b>α</b> 管整體遺忘，<b>(I − βkkᵀ)</b> 只擦掉 k 這個方向，<b>βvkᵀ</b> 寫入新值。",
+ "更新的成本是一次固定維度的矩陣運算 O(d_k·d_v)，不是「把所有舊 key 跑一遍」。",
+ "Mamba2 只有 α，DeltaNet 只有 delta。Gated DeltaNet 兩個都有。"], accent="ssm")}""",
+      notes="""<p>這一頁補的是「為什麼要有 delta rule」的動機，第一版只給了式子沒給直覺。</p>
+<p>要澄清一個常見誤解：state 裡面<b>沒有</b>一份「key1、key2、key3」的清單。
+它只有一個矩陣。所謂「更新和 apple 有關的方向」，數學上是一次 outer product
+（v 是 128×1、k 是 1×128，乘出來就是 128×128），很多甚至全部的矩陣元素都會被改到。
+但這是一次矩陣運算，不是迴圈掃過舊資料。</p>
+<p>所以複雜度是 O(d_k·d_v)，與 T 無關。這跟 attention 的 O(T·d) 是完全不同的 scaling。</p>""")
+
+slide("三種記憶：Attention、GDN、SSM", "同一個問題的三種答案：過去的資訊要怎麼存",
+      sources=["gdn", "mamba", "hfq35"], accent="ssm", body=f"""
+{gist("檔案櫃、可擦寫的白板、腦中的狀態。差別不在「能不能記」，在「怎麼存」與「存多久不變大」。")}
+{fig("memkinds", F5.fig_memory_kinds(), 4, [
+ "三者都在回答同一個問題：怎麼把過去 token 的資訊帶到現在。",
+ "<b>Attention</b> 像檔案櫃：每個 token 一份文件，全部留著，查詢時掃過全部。",
+ "<b>GDN</b> 像可擦寫的白板：把 key→value 的關聯壓進一個固定大小的矩陣，可查、可改、可擦。"
+ "<b>SSM</b> 像腦中的狀態：不記逐字逐句，只更新理解。",
+ "差別在長 context 時最明顯：Attention 還留著原始的 K/V；GDN 的資訊可能已經被後面的 token 蓋掉。",
+ "所以 3:1 的排列很合理：GDN 提供便宜的壓縮記憶，attention 補回精確查找。"],
+ accent="ssm")}""",
+      notes="""<p>GDN 與 SSM 常被混為一談，它們確實都是「固定大小的 recurrent state」，
+但 state 的數學含義不同：</p>
+<p><b>GDN</b> 的 state 比較像 associative memory，是一個 key→value 的壓縮字典，
+用 q 去查（o = S·q）。<br>
+<b>SSM</b>（Mamba 那一系）的 state 比較像動態系統的內部狀態，
+h_t = A·h_{t−1} + B·x_t，不是字典。Mamba 的貢獻是讓 A、B 隨輸入動態改變，
+所以模型可以學「這個 token 重要，留著；那個不重要，忘掉」。</p>
+<p>另外一個有用的說法：模型權重是 slow weights，整個推論過程都不變；
+GDN 的 state 是 fast weights，每個 token 都在改。o = S·q 看起來就像一個 linear layer，
+只是那個「權重」在 decode 過程中一直被改寫。</p>
+<p>還有一個容易被忽略的實務點：GDN 的 O(1) 是<b>對 context 長度</b>而言，
+不代表計算量小。每個 decode token 都要把整份 state 從 HBM 讀出來、改完再寫回去。
+低 batch 的 GDN decode 一樣可能是 memory-bandwidth-bound。演算法複雜度不等於 GPU 瓶頸。</p>""")
+
 slide("與 Mamba2 / DeltaNet 的關係", "同一條家族樹上的三個節點",
       sources=["gdn", "mut"], accent="ssm", body=f"""
 {gist("Mamba2 只會整體遺忘、DeltaNet 只會定點改寫，Gated DeltaNet 把兩種能力合起來。")}

@@ -6,6 +6,10 @@ qa2/**/*.png
 # 版控的是 research/weightmap_summary.json，用 fetch_more.py 可以重抓原檔。
 research/*-model.safetensors.index.json
 
+# tokenizer.json 12 MB，只是 tokenize_demo.py 的快取。
+# 版控的是它跑出來的 tokenize_demo.json（真實 token id）。
+research/*-tokenizer.json
+
 __pycache__/
 *.pyc
 .DS_Store

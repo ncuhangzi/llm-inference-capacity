@@ -447,3 +447,67 @@ if __name__ == "__main__":
     import sys, io
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
     print(selftest())
+
+
+# ---------------------------------------------------- 高併發的穩定態模擬 ---
+def serve_sim(m, n_users, max_seqs, in_len=2048, out_len=512, budget=8192,
+              spec_k=0, tau=1.0):
+    """封閉式的穩定態近似，用來看 max_num_seqs 怎麼在 TTFT 與 TPOT 之間換。
+
+    模型只有三個假設：
+      1. running 佇列固定 B = min(併發需求, max_num_seqs)，其餘在 waiting 排隊。
+      2. 穩定態下「進來的人」等於「出去的人」，所以每個 step 分給 prefill 的
+         token 數 P 必須剛好餵飽 decode 的消耗：P / in_len = B·τ / out_len。
+      3. 一個 step 的時間走 roofline：max(讀權重, 張量運算)。
+
+    回傳的每個欄位都可以手算驗證，不含任何擬合參數。
+    """
+    B = max(1.0, min(n_users, max_seqs))
+    queued = max(0.0, n_users - B)
+
+    # 穩定態下每個 step 要撥給 prefill 的 token 數
+    p_need = B * tau * in_len / out_len
+    p_tok = min(p_need, max(0.0, budget - B * (spec_k + 1)))
+    starved = p_need > p_tok + 1e-9          # budget 不夠餵 prefill
+
+    n_step = B * (spec_k + 1) + p_tok
+    t_mem = m.step_bytes(n_step) / GPU.bw
+    t_cmp = m.step_compute_s(n_step)
+    t_step = max(t_mem, t_cmp)
+
+    tpot = t_step / tau                       # 每個使用者的每 token 時間
+    decode_s = out_len * tpot
+    prefill_steps = in_len / max(p_tok, 1e-9)
+    prefill_s = prefill_steps * t_step
+    service_s = prefill_s + decode_s          # 進到 running 之後的總服務時間
+
+    rate = B / service_s                      # req/s：穩定態的完成率
+    queue_s = queued / rate if rate > 0 else float("inf")
+    ttft = queue_s + prefill_s
+    e2e = ttft + decode_s
+    tps = B * tau / t_step                    # 整機 decode 輸出
+
+    return {
+        "users": n_users, "max_seqs": max_seqs, "running": B, "queued": queued,
+        "prefill_tokens_per_step": p_tok, "tokens_per_step": n_step,
+        "budget_starved": starved,
+        "t_step_ms": t_step * 1e3, "bound": "compute" if t_cmp > t_mem else "memory",
+        "util_mem": min(1.0, t_mem / t_step), "util_cmp": min(1.0, t_cmp / t_step),
+        "tpot_ms": tpot * 1e3, "itl_ms": t_step * 1e3,
+        "prefill_ms": prefill_s * 1e3, "queue_ms": queue_s * 1e3,
+        "ttft_ms": ttft * 1e3, "e2e_s": e2e, "rate_rps": rate,
+        "tokens_per_s": tps,
+    }
+
+
+def sweep_max_seqs(m, n_users, candidates=(16, 32, 48, 64, 96, 128, 192, 256), **kw):
+    return [serve_sim(m, n_users, c, **kw) for c in candidates]
+
+
+def goodput(rows, ttft_ms=800.0, tpot_ms=40.0):
+    """在同一組 SLO 下，哪些設定過關；回傳通過者的整機輸出。"""
+    out = []
+    for r in rows:
+        ok = r["ttft_ms"] <= ttft_ms and r["tpot_ms"] <= tpot_ms
+        out.append({**r, "slo_ok": ok, "goodput": r["tokens_per_s"] if ok else 0.0})
+    return out

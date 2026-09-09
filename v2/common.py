@@ -19,6 +19,13 @@ SOURCES = {
     "i38": ("Qwen3.8-27B-FP8 safetensors index", "https://huggingface.co/Qwen/Qwen3.8-27B-FP8/blob/main/model.safetensors.index.json"),
     "c332": ("Qwen3-32B config.json", "https://huggingface.co/Qwen/Qwen3-32B/blob/main/config.json"),
     "q3r": ("Qwen3 Technical Report (arXiv 2505.09388)", "https://arxiv.org/abs/2505.09388"),
+    "tok": ("Qwen3.8-27B tokenizer.json（本報告用它實跑 BPE）",
+            "https://huggingface.co/Qwen/Qwen3.8-27B/blob/main/tokenizer.json"),
+    "mamba": ("Mamba: Linear-Time Sequence Modeling with Selective State Spaces",
+              "https://arxiv.org/abs/2312.00752"),
+    "gdnimpl": ("NVlabs/GatedDeltaNet 官方實作", "https://github.com/NVlabs/GatedDeltaNet"),
+    "hfq35": ("HuggingFace transformers：Qwen3.5 模型文件",
+              "https://github.com/huggingface/transformers/blob/main/docs/source/en/model_doc/qwen3_5.md"),
     # speculative decoding
     "df2": ("incoai/Qwen3.8-27B-DFlash2 模型卡", "https://huggingface.co/incoai/Qwen3.8-27B-DFlash2"),
     "dfp": ("DFlash: Block Diffusion for Flash Speculative Decoding", "https://arxiv.org/abs/2602.06036"),

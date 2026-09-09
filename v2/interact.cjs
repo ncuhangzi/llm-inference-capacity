@@ -14,6 +14,12 @@ function chk(name,cond,info){out[name]=cond?'ok':('FAIL '+(info||''));if(!cond)f
   p.on('pageerror',e=>errs.push(e.message));
   await p.goto(url);
   await p.evaluate(()=>document.fonts.ready);
+  // widget 所在的頁碼會隨內容增減而位移，改成動態尋找
+  const widgetSlide=async name=>await p.evaluate(n=>{
+    const el=document.querySelector(`[data-widget="${n}"]`);
+    return el?[...document.querySelectorAll('.slide')].indexOf(el.closest('.slide')):-1;},name);
+  const goWidget=async name=>{const i=await widgetSlide(name);
+    if(i<0)throw new Error('widget not found: '+name); await p.evaluate(i=>deck.go(i,false),i); return i;};
 
   // 1. 沒有外部請求（完全離線）
   chk('offline',remote.length===0,remote.slice(0,3).join(','));
@@ -25,11 +31,11 @@ function chk(name,cond,info){out[name]=cond?'ok':('FAIL '+(info||''));if(!cond)f
   await p.keyboard.press('ArrowLeft');
   chk('keyboard-prev',await p.evaluate(()=>deck.i)===0);
   await p.keyboard.press('End');
-  chk('keyboard-end',await p.evaluate(()=>deck.i)===81);
+  chk('keyboard-end',await p.evaluate(()=>deck.i===deck.slides.length-1));
   // shift+right 跳章
   await p.evaluate(()=>deck.go(4,false));
   await p.keyboard.down('Shift');await p.keyboard.press('ArrowRight');await p.keyboard.up('Shift');
-  chk('keyboard-chapter',await p.evaluate(()=>deck.i)===11);
+  chk('keyboard-chapter',await p.evaluate(()=>deck.i>4&&CHAPTERS.some(c=>c.at===deck.i)));
 
   // 3. Space 逐步播放動畫，跑完才換頁
   await p.evaluate(()=>deck.go(6,false));
@@ -62,7 +68,7 @@ function chk(name,cond,info){out[name]=cond?'ok':('FAIL '+(info||''));if(!cond)f
   chk('tooltip',await p.locator('#tip').evaluate(e=>e.classList.contains('on')&&e.textContent.length>20));
 
   // 6. 記憶體帳本 widget：切模型與拉 context
-  await p.evaluate(()=>deck.go(45,false));
+  await goWidget('budget');
   const w=p.locator('.slide.active [data-widget="budget"]');
   const t0=await w.innerText();
   await w.locator('.seg button',{hasText:'27B FP8'}).click();
@@ -75,14 +81,14 @@ function chk(name,cond,info){out[name]=cond?'ok':('FAIL '+(info||''));if(!cond)f
   chk('budget-warns-overflow',/超出預算|剩餘可用/.test(t2));
 
   // 7. cache widget
-  await p.evaluate(()=>deck.go(46,false));
+  await goWidget('cache');
   const c=p.locator('.slide.active [data-widget="cache"]');
   const c0=await c.innerText();
   await c.locator('.seg button',{hasText:'BF16'}).click();
   chk('cache-kv-dtype',(await c.innerText())!==c0);
 
   // 8. spec widget
-  await p.evaluate(()=>deck.go(54,false));
+  await goWidget('spec');
   const s=p.locator('.slide.active [data-widget="spec"]');
   const s0=await s.innerText();
   await s.locator('input[type=range]').nth(2).fill('200');   // batch
@@ -91,17 +97,26 @@ function chk(name,cond,info){out[name]=cond?'ok':('FAIL '+(info||''));if(!cond)f
   chk('spec-shows-breakeven',/損益兩平/.test(s1));
 
   // 9. little widget
-  await p.evaluate(()=>deck.go(68,false));
+  await goWidget('little');
   const L=p.locator('.slide.active [data-widget="little"]');
   const l0=await L.innerText();
   await L.locator('input[type=range]').first().fill('12000');
   chk('little-slider',(await L.innerText())!==l0);
 
   // 10. sweep widget 兩個實例
-  await p.evaluate(()=>deck.go(65,false));
+  await goWidget('sweep');
   chk('sweep1',(await p.locator('.slide.active [data-widget="sweep"]').innerText()).includes('吞吐'));
-  await p.evaluate(()=>deck.go(66,false));
+  await goWidget('sweep2');
   chk('sweep2',(await p.locator('.slide.active [data-widget="sweep2"]').innerText()).includes('SLO'));
+
+  // 10b. 高併發模擬器
+  await goWidget('serve');
+  const sv=p.locator('.slide.active [data-widget="serve"]');
+  const v0=await sv.innerText();
+  await sv.locator('input[type=range]').nth(1).fill('128');   // max_num_seqs
+  const v1=await sv.innerText();
+  chk('serve-maxseqs-slider',v0!==v1);
+  chk('serve-shows-bound',/頻寬|算力/.test(v1));
 
   // 11. 數字一致性：投影片上的靜態值與 JS 模型一致
   const cons=await p.evaluate(()=>{

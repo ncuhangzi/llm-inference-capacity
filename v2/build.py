@@ -20,6 +20,7 @@ import figs_core as F1
 import figs_arch as F2
 import figs_spec as F3
 import figs_load as F4
+import figs_new as F5
 import assemble
 
 ROOT = HERE.parent
