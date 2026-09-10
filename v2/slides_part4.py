@@ -342,7 +342,7 @@ slide("十個結論", "把整份報告壓成十句話", accent="ok", body=f"""
   <li><b>NVFP4 讓 122B 單卡跑得動</b>（{gb(Q35.real_weight_bytes)} GB vs
    BF16 的 {gb(Q35.real_bf16_bytes)} GB），可以用 DP 取代 TP，省掉 all-reduce。</li>
   <li><b>speculative decoding 的效益由 B × (k+1) 是否超過 N* 決定。</b>
-   27B 配 DFlash2 k=7 → 安全併發約 {KNEE/8:.0f}；超過就開始賠。</li>
+   27B 配 DFlash2 k=7 → 安全併發約 {int(KNEE//8)}；超過就開始賠。</li>
   <li><b>接受率不是常數。</b>context 從 2k 長到 30k，實測平均接受率從 65% 掉到 39%，
    吞吐從 +129% 變成 −51%。長 context 一定要重量。</li>
   <li><b>容量是一個條件式，不是一個數字。</b>

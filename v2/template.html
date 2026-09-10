@@ -23,8 +23,11 @@ html,body{height:100%}
 body{background:var(--page);color:var(--ink);font-family:var(--sans);
   font-feature-settings:"tnum" 1,"cv05" 1;-webkit-font-smoothing:antialiased;overflow:hidden}
 /* ============================================================= stage ==== */
-#stage{position:fixed;inset:0;display:grid;place-items:center}
-#canvas{width:var(--w);height:var(--h);position:relative;transform-origin:center center}
+#stage{position:fixed;inset:0;overflow:hidden}
+/* 置中由 JS 的 translate 決定，不靠 grid 對齊：畫布的 layout box 固定 1440×810，
+   視窗比它小的時候 grid 會把溢出的 item 退回 start 對齊，再套 transform-origin:center
+   縮放就會整頁偏到右下角（1366×768 實測偏 +92/+52）。 */
+#canvas{width:var(--w);height:var(--h);position:absolute;left:50%;top:50%;transform-origin:0 0}
 .slide{position:absolute;inset:0;background:var(--card);border-radius:14px;
   box-shadow:var(--shadow);overflow:hidden;display:none;
   grid-template-columns:62px 1fr;grid-template-rows:auto 1fr auto}
@@ -285,8 +288,9 @@ kbd{font-family:var(--mono);font-size:11px;background:var(--card2);border:1px so
 @media print{
   html,body{overflow:visible;background:#fff}
   #hud,#prog,#tip,dialog{display:none!important}
-  #stage{position:static;display:block;padding:0!important;place-items:start}
-  #canvas{width:1440px;height:auto;transform:none!important;display:block}
+  #stage{position:static;display:block;padding:0!important;overflow:visible}
+  #canvas{width:1440px;height:auto;transform:none!important;display:block;
+    position:static;left:auto;top:auto}
   .slide{position:static;display:grid!important;width:1440px;height:810px;
     page-break-after:always;break-after:page;border-radius:0;box-shadow:none;animation:none!important}
   .slide:last-child{page-break-after:auto}
@@ -344,12 +348,16 @@ const GiB=1073741824, MiB=1048576, KiB=1024;
 
 /* ------------------------------------------------------------- fit ----- */
 function fit(){
-  const c=$('#canvas'), W=1440, H=810;
-  const s=Math.min((innerWidth-32)/W,(innerHeight-34-28)/H);
-  c.style.transform=`scale(${s})`;
-  $('#stage').style.paddingBottom='34px';
+  const c=$('#canvas'), W=1440, H=810, HUD=34;
+  const s=Math.max(.05, Math.min((innerWidth-32)/W,(innerHeight-HUD-28)/H));
+  /* left/top 50% 把原點放在視窗中心，再往回位移半個縮放後的畫布；
+     HUD 佔掉底部 34px，所以垂直再上移 HUD/2。與視窗大小無關，一律置中。 */
+  c.style.transform=`translate(${-W*s/2}px,${-(H*s+HUD)/2}px) scale(${s})`;
 }
 addEventListener('resize',fit);
+addEventListener('load',fit);            /* 字型載入完成後畫布尺寸才定案 */
+addEventListener('pageshow',fit);        /* 從 bfcache 回來 */
+if(window.ResizeObserver) new ResizeObserver(fit).observe(document.documentElement);
 
 /* ---------------------------------------------------- figure engine ---- */
 /* Declarative stepper. Elements carry data-s="2" or data-s="2-4" or data-s="2+".

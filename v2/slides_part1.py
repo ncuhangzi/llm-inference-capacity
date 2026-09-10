@@ -369,3 +369,42 @@ slide("屋頂線：B200 上的轉折點是 292 token / step",
 <p>要注意這是 dense 峰值、且不含 attention kernel 與 MoE routing 的成本，
 所以是解析上限。MoE 的專家讀取量會隨 batch 成長，讓 122B 的實際轉折點推遲到約 1,765 token/step，
 CH3 與 CH7 會處理這個修正。</p>""")
+
+slide(f"N 指的是哪 {KNEE:.0f} 個 token", "這個數字最常被誤讀，先把它釘死",
+      sources=["b200l", "b200"], body=f"""
+{gist(f"N 是「這一次 forward 裡共用同一批權重做 GEMM 的 token 位置數」。不是 context 長度，"
+      f"也不是「一次只能生 {KNEE:.0f} 個 token」。")}
+<div class="cols">
+ {pane("三個它不是的東西", f'''<ul style="font-size:13.4px">
+  <li>不是 context 長度，也不是 <code>--max-model-len</code></li>
+  <li>不是「B200 一次只能生 {KNEE:.0f} 個 token」</li>
+  <li>不是每張卡的容量上限（那是 CH6 的 KV cache 帳）</li>
+ </ul>
+ <div class="formula" style="margin:6px 0 4px">decode 時　<em>N</em> ≈ <span class="c2">B</span></div>
+ <p style="font-size:13px;color:var(--mut)">32 條併發就是 N = 32。就算每條的 context 都
+ 已經 100k，這一步對權重 GEMM 而言仍然只有 32 個 token 位置——
+ 長 context 增加的是 attention 讀 KV 的流量，<b>不在這條屋頂線裡</b>。</p>''', "compute")}
+ {pane("同一個 N，三種來源", table(["情境", "~N 是什麼", "~量級"], [
+   ["decode（無 spec）", "併發數 B", "1 – 60"],
+   ["decode + spec", f"B × (k+1)", f"B × {Q38.spec_k + 1}"],
+   ["prefill（分塊）", "本輪排進去的 prompt token", "→ 16,384"],
+  ], "compact"), "mem")}
+</div>
+{table([f"~N（這一步的 token 位置數）", "~搬 27B 的 FP8 權重", "~張量運算", "~一個 step 要多久"],
+  [[f"{n:,}", f"{Q38.step_bytes(1) / M.GPU.bw * 1e3:.2f} ms",
+    f"{Q38.step_compute_s(n) * 1e3:.3f} ms",
+    f"<b>{Q38.step_time_s(n) * 1e3:.2f} ms</b>"]
+   for n in (1, 32, 128, 256, int(KNEE), 512)], "compact", hi=(4,))}
+{warn(f"「{KNEE:.0f} 以下幾乎免費」不是說 token 沒有成本，而是<b>那 "
+      f"{Q38.step_bytes(1) / M.GPU.bw * 1e3:.1f} ms 的權重搬運費你本來就要付</b>，"
+      f"而張量核心在這段時間裡幾乎閒著（N=32 時只用掉約 "
+      f"{Q38.step_compute_s(32) / (Q38.step_bytes(1) / M.GPU.bw) * 100:.0f}%）。"
+      "這是理想化的 roofline，不含 attention 讀 KV、norm、量化 scale 與排程。")}""",
+      notes=f"""<p>這一頁是為了擋掉現場最常見的誤解。講的時候直接問聽眾：
+「N = 292 是說一次只能生 292 個 token 嗎？」——通常會有人點頭。</p>
+<p>關鍵句：<b>N 是這一次 forward 同時參與權重 GEMM 的 token 位置數。</b>
+decode 每條序列一步只吐 1 個 token，所以 N 就是併發數；prefill 一次排進去幾千個
+token，所以 prefill 幾乎永遠在屋頂線右邊。同一條線的兩端，不是兩件事。</p>
+<p>那張表要唸的重點是最後一欄：N 從 1 加到 {int(KNEE)}，step 時間幾乎沒變
+（{Q38.step_time_s(1)*1e3:.2f} → {Q38.step_time_s(int(KNEE))*1e3:.2f} ms），
+到 512 才跳到 {Q38.step_time_s(512)*1e3:.2f} ms。這就是 speculative decoding 的本錢。</p>""")

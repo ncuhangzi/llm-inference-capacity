@@ -366,6 +366,52 @@ slide("併發上限與 context 的取捨", "同一張卡，你可以選「多人
 只會讓延遲爆掉、佇列變長，goodput 反而下降。</p>
 <p>正確做法：記憶體上限決定<b>硬性天花板</b>，SLO 測試決定<b>實際設定值</b>。</p>""")
 
+slide("同一顆模型，兩個引擎怎麼記帳", "vLLM 一個統一池，SGLang 兩個獨立池",
+      sources=["own", "hyb", "mut"], accent="mem", body=f"""
+{gist("兩邊 log 印的「KV cache」不是同一個東西：vLLM 把 GDN state 混進同一個 pool 用 token 計價，"
+      "SGLang 把 KV 與 SSM 分成兩個池分開配。數字不能直接相比。")}
+<div class="cols">
+ {pane("vLLM：統一 page，一個數字", f'''
+ <p style="font-size:13.2px">把 attention 的 <code>block_size</code> 撐大到 page ≥ mamba state，
+ 兩種 cache 用同樣大小的 page 共享一個 block pool。所以 log 只印一行
+ <code>GPU KV cache size: N tokens</code>——<b>GDN state 已經混在裡面</b>。</p>
+ <table class="compact"><tbody>
+ <tr><td>block size</td><td class="n">832 tokens</td></tr>
+ <tr><td>mamba page padding</td><td class="n">1.71%</td></tr>
+ <tr><td>池子（TP=2 合計）</td><td class="n">{141.3 * 2:.0f} GiB</td></tr>
+ <tr><td>印出來的容量</td><td class="n">3,339,380 tokens</td></tr>
+ <tr><td>262K 併發</td><td class="n"><b>12.74×</b></td></tr>
+ </tbody></table>
+ <p style="font-size:12.6px;color:var(--mut)">用本章的 SSM 公式反算 mamba page，
+ 只有 block size 832 能對上 1.71% 這個 padding——等於替公式做了一次實機驗算。</p>''', "compute")}
+ {pane("SGLang：兩個池，分開印", f'''
+ <p style="font-size:13.2px"><code>token_to_kv_pool</code> 按 <b>token</b> 配，
+ mamba/SSM pool 按 <b>槽位</b> 配（每槽 = 一條序列的完整 state，與 context 無關）。
+ 所以會看到兩個獨立的數字。</p>
+ <table class="compact"><tbody>
+ <tr><td>KV 池</td><td class="n">31 GiB（508,278 tokens）</td></tr>
+ <tr><td>SSM 池</td><td class="n">97 GiB</td></tr>
+ <tr><td>換算槽位</td><td class="n">≈ {97 * M.GiB / Q38.ssm_bytes(0):.0f} 條</td></tr>
+ <tr><td>262K 併發（KV 限）</td><td class="n"><b>508,278 ÷ 262,144 = 1.94</b></td></tr>
+ </tbody></table>
+ <p style="font-size:12.6px;color:var(--mut)">同一顆 27B、單卡、沒開 spec。
+ 兩個池<b>不能互相調度</b>，所以真正的上限是兩者取小。</p>''', "ssm")}
+</div>
+{warn(f"<b>SGLang 這組的配比是歪的。</b>SSM 池預留了 {97 * M.GiB / Q38.ssm_bytes(0):.0f} "
+      f"條序列的空間，但 KV 只剩 31 GiB —— 跑滿 262K 時只放得下 <b>1.9 條</b>。"
+      f"把槽位砍到接近實際併發（例如 64 條，約 {64 * Q38.ssm_bytes(0) / M.GiB:.1f} GiB），"
+      f"省下的還給 KV，同一張卡的 262K 併發可以拉到約 "
+      f"{(31 + 97 - 64 * Q38.ssm_bytes(0) / M.GiB) * M.GiB / (262144 * Q38.kv_bytes_per_token('bf16')):.1f} 條。"
+      "vLLM 的統一池則是自動按需分配：不用調，但也看不出哪一塊吃掉了記憶體。")}""",
+      notes=f"""<p>這一頁是實機資料，來源是使用者提供的兩份啟動 log（vLLM 0.26.1 TP=2、
+SGLang 單卡）。它同時是本章公式的<b>實機驗算</b>：用投影片上的 SSM 公式算出的 mamba page
+是 1,675,264 B，vLLM 選 block size 832 讓 attention page = 1,703,936 B，
+兩者差 1.712%——log 印的就是 1.71%。</p>
+<p>要強調的實務結論有兩點：<br>
+① 比較兩個引擎時，先問「它的 KV cache 數字含不含 SSM」，再問 TP 與 spec 開關，否則是雞同鴨講。<br>
+② SGLang 這種雙池設計，配比要自己按 workload 調。長 context 就少給槽位、多給 KV；
+短對話反過來。這組設定顯然是照預設值跑的。</p>""")
+
 # ============================================ CH7 Speculative decoding ====
 chapter("CH7 Speculative decoding 對 serving 的影響", "spec")
 
@@ -493,7 +539,7 @@ slide("(k+1)× 的 token 撞上屋頂線", "這是 speculative decoding 對 serv
 {fig("specbatch", F3.fig_spec_batch(), 4, [
  "橫軸是併發序列數 B，縱軸是相對不用 spec 的輸出速率倍數。",
  f"<b>27B + DFlash2 (k=7)</b>：B × 8 一旦超過 N* = {KNEE:.0f}（也就是 B ≈ "
- f"{KNEE/8:.0f}），驗證變成 compute-bound，加速直線墜落。",
+ f"{int(KNEE//8)}），驗證變成 compute-bound，加速直線墜落。",
  "<b>122B + MTP (k=3)</b>：形狀完全不同，因為它是 MoE。低併發時 spec 的優勢被"
  "「驗證要碰到更多 expert」吃掉；高併發時 expert 讀取被更多 token 分攤，優勢回升。",
  "紅色虛線是損益兩平線。低於它，speculative decoding 就是純粹在燒算力。"],
@@ -502,12 +548,48 @@ slide("(k+1)× 的 token 撞上屋頂線", "這是 speculative decoding 對 serv
 <p>推導很簡單：驗證階段一次送 N = B × (k+1) 個 token。CH1 已經證明
 N &lt; N* 時加 token 幾乎免費、N &gt; N* 時線性收費。所以：<br>
 <b>B_安全 ≈ N* / (k+1)</b>。<br>
-27B 配 k=7 → B ≈ {KNEE/8:.0f}；122B 配 k=3 → B ≈ {KNEE/4:.0f}（但 MoE 的修正讓它實際更寬）。</p>
+27B 配 k=7 → B ≈ {int(KNEE//8)}；122B 配 k=3 → B ≈ {int(KNEE//4)}（但 MoE 的修正讓它實際更寬）。</p>
 <p>這也解釋了一個常見現象：同一組設定在壓測初期（低併發）看起來很棒，
 壓到中段突然變差，就是越過了這條線。</p>
 <p>模型的假設要講清楚：這是解析上限，只算權重讀取與張量運算，
 不含 attention kernel、MoE routing、all-to-all、取樣與排程開銷。
 真實曲線的形狀相同，但轉折會更早、絕對值更低。</p>""")
+
+slide("一次驗證 8 個位置：為什麼可行、什麼時候變貴",
+      "驗證是一次迷你 prefill，不是 8 次 decode",
+      sources=["spd", "dfp", "sspec"], accent="spec", body=f"""
+{gist(f"草稿已經在手上，所以目標模型可以用一般的 causal mask 一次算完 8 個位置的分布——"
+      f"共用同一次權重讀取。代價是 B × {Q38.spec_k + 1} 這個數字會去撞 N*。")}
+<div class="cols">
+ {pane("為什麼 autoregressive 還能一次驗證 8 個", f'''
+ <p style="font-size:13.4px">驗證階段目標模型<b>不需要自己生成</b>，它只回答一個問題：
+ 「如果前綴長這樣，我會吐什麼？」</p>
+ <p style="font-size:13.4px">把 anchor 接上 {Q38.spec_k} 個草稿拼成一條序列送進去，
+ 配 causal mask 一次 forward，第 i 個位置看到的正好是它前面那些 token，
+ 跟逐步生成看到的<b>完全一樣</b>。</p>
+ <p style="font-size:13.4px;color:var(--mut)">所以它是一次<b>迷你 prefill</b>。
+ 8 個位置的 GEMM 一批做完，權重只讀一次——這就是 N 從 B 變成 B × (k+1) 的由來。
+ 平均只有 τ ≈ {M.SPEC_TAU["q38"]:.1f} 個位置會被採用，其餘算完就丟。</p>''', "compute")}
+ {pane(f"27B 的梯子（k = {Q38.spec_k}）", table(["~B", f"~B × {Q38.spec_k + 1}", "~vs N*", "~位置"], [
+   [f"{b}", f"{b * (Q38.spec_k + 1):,}", f"{b * (Q38.spec_k + 1) / KNEE:.2f}×",
+    ("<span class='tagc g'>免費區</span>" if b * (Q38.spec_k + 1) < KNEE * .95
+     else "<span class='tagc'>碰線</span>" if b * (Q38.spec_k + 1) < KNEE * 1.1
+     else "<span class='tagc e'>開始收費</span>")]
+   for b in (8, 16, 32, 36, 48, 64, 128)], "compact"), "spec")}
+</div>
+{warn(f"<b>兩個門檻不要搞混。</b>B ≈ {int(KNEE//8)} 是「額外驗證不再免費」的<b>起點</b>，"
+      f"不是「超過就不能開」。真正由賺轉賠是損益兩平點，解析模型算出來是 "
+      f"<b>B ≈ {M.spec_break_even(Q38):.0f}</b>：B=32 還有 {M.spec_speedup(Q38, 32):.2f}×、"
+      f"B=64 剩 {M.spec_speedup(Q38, 64):.2f}×、B=128 只剩 {M.spec_speedup(Q38, 128):.2f}×。"
+      f"實機 max_num_seqs = 60 正好落在這段邊際效益快速遞減的區間，值得逐點 A/B。")}""",
+      notes=f"""<p>這一頁補的是聽眾最常卡住的兩個問題。</p>
+<p><b>問題一：「autoregressive 不是一個一個生嗎？怎麼一次驗 8 個？」</b>
+關鍵在草稿已經產生了，驗證只是把整條候選序列當成 prompt 做一次 causal forward，
+同時取出每個位置的 logits。跟 CH1 講 prefill 的道理完全一樣——所以我說它是迷你 prefill。</p>
+<p><b>問題二：「那 {int(KNEE//8)} 是不是天花板？」</b>不是。{int(KNEE//8)} 是免費區的邊界，
+{M.spec_break_even(Q38):.0f} 才是損益兩平。中間那段還在賺，只是越來越薄。
+實機 max_num_seqs 設 60，就落在這一段——所以壓測要在 32 / 48 / 60 三點各做一次開關對照，
+不要只測低併發就下結論。</p>""")
 
 slide("互動試算：spec decoding 划不划算", "自己調 k、α 與併發數",
       sources=["sspec", "lat", "df2"], accent="spec", body=f"""
@@ -594,10 +676,10 @@ slide("什麼時候該開、什麼時候該關", "一張可以直接用的決策
  ["單一使用者互動、demo、內部工具（B ≤ 8）",
   "<span class='tagc g'>全開，k 用最大</span>",
   f"整段都在 memory-bound 區，B×(k+1) 遠低於 {KNEE:.0f}。TPOT 可以改善 2–4×。"],
- [f"中等併發（B ≈ 8–{KNEE/8:.0f}）、context &lt; 8k",
+ [f"中等併發（B ≈ 8–{int(KNEE//8)}）、context &lt; 8k",
   "<span class='tagc g'>開</span>",
-  "仍在 memory-bound 區。27B 配 k=7 可以撐到 B ≈ 36。"],
- [f"高併發（B &gt; {KNEE/8:.0f}）、追求整機 throughput",
+  f"仍在 memory-bound 區。27B 配 k=7 可以撐到 B ≈ {int(KNEE//8)}。"],
+ [f"高併發（B &gt; {int(KNEE//8)}）、追求整機 throughput",
   "<span class='tagc m'>調小 k，或關掉</span>",
   "驗證階段變成 compute-bound，多猜的 token 都在燒算力。"],
  ["長 context（&gt; 16k）",
@@ -623,7 +705,7 @@ slide("什麼時候該開、什麼時候該關", "一張可以直接用的決策
  </ul>''', "mem")}
  {pane("本次設定的初步判斷", f'''<p style="font-size:13.2px">122B + MTP k=3：
  <b>建議開啟</b>，MoE 的特性讓它在高併發時仍有優勢。</p>
- <p style="font-size:13.2px">27B + DFlash2 k=7：<b>建議在 B ≤ 36 時開啟</b>；
+ <p style="font-size:13.2px">27B + DFlash2 k=7：<b>建議在 B ≤ {int(KNEE//8)} 時開啟</b>；
  高併發批次任務可考慮降到 k=3 或關閉。兩者都要先用自家 workload 量接受率。</p>''', "spec")}
 </div>""",
       notes="""<p>這一頁可以直接印出來當 checklist。</p>

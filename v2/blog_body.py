@@ -15,7 +15,7 @@ note(f"""
 12 層 attention、lm_head、MTP head 全都還是 BF16，佔了 checkpoint 的 21.9%。
 這是我們從 safetensors 的 weight map 直接讀出來的，官方文件沒有明說。</p>
 <p><b>5.</b> Speculative decoding 的效益由一個很簡單的式子決定：併發數 × (k+1) 有沒有超過那個
-{KNEE:.0f}。27B 配 DFlash2 猜 7 個，安全併發大約到 36；超過就開始賠。</p>
+{KNEE:.0f}。27B 配 DFlash2 猜 7 個，安全併發大約到 {int(KNEE//8)}；超過就開始賠。</p>
 """, "key")
 
 p("這篇是我們在評估 ", "<code>nvidia/Qwen3.5-122B-A10B-NVFP4</code> 與 ",
@@ -28,7 +28,7 @@ p("我盡量讓每個數字都可以被驗算：架構參數全部來自官方 c
 
 note("""
 <p><b>閱讀方式</b>　虛線底的粗體字是專有名詞，滑鼠移過去會出現解釋。
-右上角可以關掉動畫自動播放。想看簡報版（82 頁、有講稿）點右上的「簡報版」。</p>
+右上角可以關掉動畫自動播放。想看簡報版（94 頁、有講稿）點右上的「簡報版」。</p>
 <p><b>數字的可信度</b>　文章裡的數字分三種：<span class="tagc g">實測 / 官方</span>
 可以直接引用；<span class="tagc">公式推導</span>公式都印出來了，可以自己算，
 標成「解析上限」的實測通常只有它的 30–60%；<span class="tagc m">教學示例</span>
@@ -270,6 +270,64 @@ figure("roof", F1.fig_roofline(), 5, [
     "32 併發配上 DFlash2 的 7 個草稿，一次就送進 256 個 token，剛好貼在轉折點上。"],
     "屋頂線。左半邊是「加 token 幾乎免費」的區間，右半邊開始按 token 收費。")
 
+h3(f"N 指的是哪 {KNEE:.0f} 個 token", "what-is-n")
+
+p("這個數字很容易被誤讀，先把它釘死。<b>N 不是 context 長度</b>，不是 ",
+  "<code>--max-model-len</code>，也不是「B200 一次只能生 ", f"{KNEE:.0f}", " 個 token」。",
+  "它是<b>這一次 forward 裡，共用同一批權重做 GEMM 的 token 位置數</b>。")
+
+p("一般的 decode 步驟，每條 active sequence 只吐一個新 token，所以 N 就是這一步的併發數：")
+
+formula("<em>N</em> ≈ <span class='c2'>B</span>",
+        "B 是這一步在 running 佇列裡的序列數。32 條併發就是 N = 32。")
+
+p("即使每條 request 的 context 都已經長到 100k，這一步對權重 GEMM 而言仍然只有 32 個 token 位置。",
+  "長 context 增加的是 attention 讀 KV cache 的流量，那一項<b>不在這條屋頂線裡</b>——",
+  "它是另一條成長曲線，PART 06 單獨算。")
+
+p("同一個 N，在三種情境下的來源完全不同：")
+
+table(["情境", "~N 是什麼", "~本次設定的量級"], [
+    ["decode（沒開 spec）", "併發數 B", "1 – 60"],
+    ["decode + speculative", f"B × (k+1)，一次驗證整塊草稿", f"B × {Q38.spec_k + 1}（k = {Q38.spec_k}）"],
+    ["prefill / chunked prefill", "這一輪排進去的 prompt token 數", "最多到 max_num_batched_tokens"],
+], "compact")
+
+p("所以 prefill 幾乎永遠站在屋頂線的右半邊（compute-bound），decode 幾乎永遠站在左半邊",
+  "（memory-bound）。這是同一條線的兩端，不是兩件不相干的事。")
+
+h3("拿 27B 走一遍", "roofline-27b")
+
+p("代進真實數字會更有感。Qwen3.8-27B 是 dense 模型，一個 step 必須把整份 FP8 權重讀過一遍，",
+  f"也就是 <b>{M.fmt_gb(Q38.step_bytes(1))}</b>：")
+
+formula(f"t<sub>頻寬</sub> = {M.fmt_gb(Q38.step_bytes(1))} ÷ 7.7 TB/s = "
+        f"<b>{Q38.step_bytes(1) / GPU.bw * 1e3:.2f} ms</b>",
+        "不管這一步要算 1 個還是 200 個 token，這段時間都跑不掉。")
+
+p("另一邊，一個 token 對每個參數做一次乘、一次加：")
+
+formula("t<sub>算力</sub>(1 token) = 2<em>P</em> / <span class='c3'>F</span> ≈ "
+        f"<b>{Q38.token_compute_s * 1e6:.1f} µs</b>",
+        f"2 × 27.8B ÷ 4.5 PFLOP/s ≈ 12 µs；下表用的是逐張量分精度算出的 "
+        f"{Q38.token_compute_s * 1e6:.2f} µs。")
+
+table(["~N（這一步的 token 位置數）", "~搬權重", "~張量運算", "~一個 step 實際要多久"],
+      [[f"{n:,}", f"{Q38.step_bytes(1) / GPU.bw * 1e3:.2f} ms",
+        f"{Q38.step_compute_s(n) * 1e3:.3f} ms",
+        f"<b>{Q38.step_time_s(n) * 1e3:.2f} ms</b>"]
+       for n in (1, 32, 128, 256, int(KNEE), 512)], "compact", hi=(4,))
+
+note(f"""
+<p>這張表就是「N 小於 {KNEE:.0f} 之前，多塞 token 幾乎免費」的意思。
+<b>不是 token 沒有成本</b>，而是你本來就得付那 {Q38.step_bytes(1) / GPU.bw * 1e3:.1f} ms 的權重搬運費，
+而張量核心在這段時間裡幾乎閒著——N = 32 時只用掉大約
+{Q38.step_compute_s(32) / (Q38.step_bytes(1) / GPU.bw) * 100:.0f}%。
+多塞進來的 token 是在花那塊閒置算力。</p>
+<p>但這是<b>理想化的 roofline，不是實測 latency</b>。真實的 step 還要加上 attention 讀 KV cache、
+RMSNorm 與 activation、量化的 scale 處理、kernel 啟動與排程。</p>
+""")
+
 h3("量化幫不上這個忙", "quant-invariance")
 
 p("這裡有個結果很反直覺。B200 的張量核心，每把位寬砍半就把吞吐加倍：BF16 是 2.25 PFLOP/s、",
@@ -291,6 +349,45 @@ note(f"""
 <p>反過來說，只要 N &lt; {KNEE:.0f}，你手上就有一塊<b>免費的算力</b>。
 這塊算力就是 speculative decoding 的本錢。</p>
 """)
+
+h3("正式一點：這就是算術強度", "arith-intensity")
+
+p("上面那條式子是 roofline 模型的標準結果。Roofline 看的是一個 kernel 的",
+  "<b>算術強度</b>（arithmetic intensity）——每從記憶體搬 1 個 byte 進來，換到多少次浮點運算：")
+
+formula("AI = FLOPs / Bytes")
+
+p("套到 LLM 的權重 GEMM：每個參數搬 <em>b</em> 個 byte 進來，被這一步的 N 個 token 共用，",
+  "每個 token 對它做 2 次 FLOP。參數量 <em>P</em> 上下對消：")
+
+formula("AI ≈ 2<em>N</em><em>P</em> / (<em>P</em> · <span class='c2'>b</span>) "
+        "= 2<em>N</em> / <span class='c2'>b</span>",
+        "FP8（b = 1）時 AI ≈ 2N FLOP/byte。這就是為什麼模型多大都不影響 N*。")
+
+p("而硬體自己的比值是固定的：")
+
+formula(f"<span class='c3'>F</span> / <span class='c3'>BW</span> = 4.5 PFLOP/s ÷ 7.7 TB/s ≈ "
+        f"<b>{GPU.flops['fp8'] / GPU.bw:.0f}</b> FLOP/byte",
+        "B200 每搬 1 個 byte 進來，理論上有能力做這麼多次 FLOP。")
+
+p(f"兩邊相等：2N = {GPU.flops['fp8'] / GPU.bw:.0f}，得到 N = {KNEE:.0f}。",
+  f"這是 {KNEE:.0f} 最正式的說法——<b>B200 的算力／頻寬比，要求每份權重被大約 ",
+  f"{KNEE:.0f} 個 token 重複使用，才餵得飽張量核心。</b>")
+
+note(f"""
+<h4>什麼時候不要用這個數字</h4>
+<p><b>它是估計值，不是硬體規格。</b>NVIDIA 的 datasheet 寫 B200 的 HBM 頻寬是
+<i>up to</i> 8 TB/s，本文採用 HGX B200 規格表的 7.7 TB/s。{cite("b200", "b200l")}
+若改用 8 TB/s，同一條式子給出 N* ≈ {GPU.flops['fp8'] / (2 * 8e12):.0f}。
+差 4%，結論不變，但別把它想成晶片裡有一個「{KNEE:.0f} token 開關」。</p>
+<p><b>實測的轉折點會更低。</b>張量核心吃不到峰值、HBM 也吃不到標稱頻寬，再加上 attention
+讀 KV cache、activation 與 norm、量化的 scale 處理、TP 通訊、kernel 啟動與排程，
+實際的 ridge 通常只有理論值的六到八成。要寫進正式的容量報告，得用自家 benchmark 掃出來。</p>
+<p><b>MoE 不適用這條式子。</b>推導的前提是「每個 token 都讀同一批權重」，P 才消得掉。
+MoE 的 batch 一變大，被碰到的 unique expert 就跟著變多，分母不再是常數：
+122B-A10B 的實際轉折點是 <b>{Q35.knee_tokens():,.0f}</b> token/step，不是 {KNEE:.0f}。
+推導在 PART 05。</p>
+""", "warn")
 
 # =============================================== 3. vLLM ================
 h2("PART 03", "vLLM 怎麼把它變成一個服務", "vllm")
@@ -714,6 +811,48 @@ note("""
 真正能承諾的容量還受延遲限制，通常小得多。後面 PART 08 會講怎麼量。</p>
 """, "warn")
 
+h3("同一顆模型，兩個引擎怎麼記帳", "engine-accounting")
+
+p("上面這些公式是引擎中立的，但<b>引擎印出來的數字不是</b>。同一顆 Qwen3.8-27B，",
+  "vLLM 與 SGLang 的啟動 log 對「KV cache 有多大」給出的答案完全不同——",
+  "不是模型不一樣，是兩套 allocator 的記帳方式不一樣。", cite("own", "hyb"))
+
+p("<b>vLLM 只有一個池。</b>它把 attention 的 block size 撐大到 page ≥ mamba state，",
+  "兩種 cache 用同樣大小的 page 共用一個 block pool，所以 log 只印一行 ",
+  "<code>GPU KV cache size: N tokens</code>——<b>GDN 的 state 已經混在那個數字裡</b>，",
+  "不能當成純 KV 來反算。")
+
+p("<b>SGLang 是兩個池。</b><code>token_to_kv_pool</code> 按 token 配，mamba/SSM pool 按",
+  "<b>槽位</b>配（每個槽位是一條序列的完整 state，跟 context 長度無關），所以分開印。")
+
+table(["", "vLLM 0.26.1（TP=2、開 DFlash2）", "SGLang（單卡、沒開 spec）"], [
+    ["記帳方式", "統一 page，一個 pool", "KV 與 SSM 兩個 pool"],
+    ["log 印的容量", "<b>3,339,380 tokens</b>（含 SSM）",
+     "KV <b>31 GiB / 508,278 tokens</b>　＋　SSM <b>97 GiB</b>"],
+    ["池子大小", f"{141.3:.1f} GiB × 2 卡 = {141.3*2:.0f} GiB", "31 + 97 = 128 GiB"],
+    ["SSM 的處理", "混在 token 計價裡（block size 832，page padding 1.71%）",
+     f"獨立預留 ≈ {97*GiB/Q38.ssm_bytes(0):.0f} 個槽位"],
+    ["262K 滿載併發", "<b>12.74</b>（引擎自己印的）",
+     "<b>1.94</b>（508,278 ÷ 262,144，卡在 KV 池）"],
+], "compact", hi=(4,))
+
+note(f"""
+<h4>兩件可以直接拿去用的事</h4>
+<p><b>① 這組 log 反過來驗算了本章的 SSM 公式。</b>用上面的式子算 TP=2 時每層 mamba 的 page
+是 1,675,264 B；vLLM 選了 block size 832，attention page = 832 × 2048 = 1,703,936 B，
+兩者差 <b>1.712%</b>——它 log 印的正是 1.71%。只有 832 這個值對得上，
+等於替 recurrent + conv 的公式做了一次實機驗證。</p>
+<p><b>② SGLang 那組的配比是歪的。</b>SSM 池預留了 {97*GiB/Q38.ssm_bytes(0):.0f} 條序列的空間，
+但實際併發根本用不到，KV 卻只剩 31 GiB，跑滿 262K 時只放得下 1.9 條。
+把槽位砍到接近真實併發（例如 64 條，約 {64*Q38.ssm_bytes(0)/GiB:.1f} GiB），
+省下來的還給 KV，同一張卡的 262K 併發可以拉到約
+<b>{(31+97-64*Q38.ssm_bytes(0)/GiB)*GiB/(262144*Q38.kv_bytes_per_token('bf16')):.1f}</b> 條。
+雙池設計要自己按 workload 配比：長 context 少給槽位、多給 KV，短對話反過來。
+vLLM 的統一池則是自動按需分配，好處是不用調，壞處是看不出哪一塊吃掉了記憶體。</p>
+<p><b>比較兩個引擎之前</b>，先問三個問題：它的「KV cache」含不含 SSM、TP 幾、spec 有沒有開。
+少問一個就是雞同鴨講。</p>
+""", "key")
+
 # ========================================= 7. speculative decoding =======
 h2("PART 07", "Speculative decoding 什麼時候會賠錢", "spec")
 
@@ -813,18 +952,55 @@ figure("accept", F3.fig_accept(), 4, [
     "這個式子假設每個位置的接受率相同，所以它是樂觀估計。"
     "實際的 τ 要從引擎的 acceptance metrics 讀。", accent="spec")
 
+h3("驗證為什麼可以一次做完", "verify-batch")
+
+p("這裡值得停一下：生成明明是 autoregressive 的，目標模型怎麼可能一次驗證 8 個位置？")
+
+p("關鍵是<b>草稿已經在手上了</b>。驗證階段不需要目標模型自己一步步生成，它只要回答一個問題：",
+  "「如果前綴長這樣，我自己會吐什麼？」把 anchor 接上 7 個草稿拼成一整條序列送進去，",
+  "配上一般的 causal mask，一次 forward 就同時算出每個位置的分布——",
+  "第 i 個位置看到的正好是它前面那些 token，跟逐步生成時看到的完全一樣。")
+
+p("所以驗證是一次<b>迷你 prefill</b>，不是 8 次 decode。這也是它能共用同一次權重讀取的原因：",
+  "8 個位置的 GEMM 是一批做完的，就像 PART 02 說的，N 從 B 變成 B × (k+1)。")
+
+p("代價是這 8 個位置全部都要算，但平均只有 τ ≈ ", f"{SPEC_TAU['q38']:.1f}",
+  " 個會被採用，其餘算完就丟。丟掉的那些就是拿閒置算力下的賭注——",
+  "只要 N 還在屋頂線左邊，這個賭注幾乎不用錢。")
+
 h3("(k+1)× 的 token 撞上屋頂線", "spec-roofline")
 
 p("這是整篇文章最實用的一段。驗證階段一次要送 <b>B × (k+1)</b> 個 token 進去。",
   "PART 02 已經證明，這個數字超過 ", f"{KNEE:.0f}", " 之後就開始按 token 收費。所以：")
 
 formula("B<sub>安全</sub> ≈ <em>N*</em> / (k + 1)",
-        f"27B 配 k=7 → B ≈ {KNEE/8:.0f}；122B 配 k=3 → B ≈ {KNEE/4:.0f}（MoE 會讓它更寬，見下）。")
+        f"27B 配 k=7 → B ≈ {int(KNEE//8)}；122B 配 k=3 → B ≈ {int(KNEE//4)}（MoE 會讓它更寬，見下）。")
+
+p("把 27B 的梯子排出來就很清楚（k = 7，所以每條序列一次驗證 8 個位置）：")
+
+table(["~併發 B", f"~驗證送進去 B × {Q38.spec_k + 1}", f"~相對 N* = {KNEE:.0f}", "~屋頂線的哪一邊"],
+      [[f"{b}", f"{b * (Q38.spec_k + 1):,}",
+        f"{b * (Q38.spec_k + 1) / KNEE:.2f}×",
+        ("<span class='tagc g'>左邊，額外驗證幾乎免費</span>"
+         if b * (Q38.spec_k + 1) < KNEE * 0.95 else
+         "<span class='tagc'>剛好碰到轉折點</span>" if b * (Q38.spec_k + 1) < KNEE * 1.1 else
+         "<span class='tagc e'>右邊，驗證開始按 token 收費</span>")]
+       for b in (8, 16, 32, 36, 48, 64, 128)], "compact", hi=(3,))
+
+note(f"""
+<p><b>兩個門檻不要搞混。</b>B ≈ {int(KNEE//8)} 是「額外的驗證計算不再免費」的起點，
+不是「超過就不能開」。真正由賺轉賠要到損益兩平點——本文的解析模型算出來是
+<b>B ≈ {M.spec_break_even(Q38):.0f}</b>。中間那一段仍然在賺，只是邊際效益一路遞減：
+B = 32 時還有 {M.spec_speedup(Q38, 32):.2f}×，B = 64 剩 {M.spec_speedup(Q38, 64):.2f}×，
+B = 128 只剩 {M.spec_speedup(Q38, 128):.2f}×。</p>
+<p>而且這是<b>解析上限</b>，只算權重讀取與張量運算。真實系統還要付起草器的排程、
+額外的 KV 寫入與 acceptance 檢查，實測的轉折會比表上更早出現。</p>
+""")
 
 figure("specbatch", F3.fig_spec_batch(), 4, [
     "橫軸是併發序列數 B，縱軸是相對不用 spec 的輸出速率倍數。",
     f"<b>27B + DFlash2 (k=7)</b>：B × 8 一旦超過 N* = {KNEE:.0f}（也就是 B ≈ "
-    f"{KNEE/8:.0f}），驗證變成 compute-bound，加速直線墜落。",
+    f"{int(KNEE//8)}），驗證變成 compute-bound，加速直線墜落。",
     "<b>122B + MTP (k=3)</b>：形狀完全不同，因為它是 MoE。低併發時 spec 的優勢被"
     "「驗證要碰到更多 expert」吃掉；高併發時 expert 讀取被更多 token 分攤，優勢回升。",
     "紅色虛線是損益兩平線。低於它，speculative decoding 就是純粹在燒算力。"],
@@ -894,9 +1070,9 @@ h3("所以到底該不該開", "spec-decision")
 table(["情境", "建議", "理由"], [
     ["單一使用者互動、demo、內部工具（B ≤ 8）", "<span class='tagc g'>全開，k 用最大</span>",
      f"完全在 memory-bound 區，B×(k+1) 遠低於 {KNEE:.0f}。TPOT 可以改善 2–4×。"],
-    [f"中等併發（B ≈ 8–{KNEE/8:.0f}）、context &lt; 8k", "<span class='tagc g'>開</span>",
+    [f"中等併發（B ≈ 8–{int(KNEE//8)}）、context &lt; 8k", "<span class='tagc g'>開</span>",
      "仍在 memory-bound 區。27B 配 k=7 可以撐到 B ≈ 36。"],
-    [f"高併發（B &gt; {KNEE/8:.0f}）、追求整機 throughput",
+    [f"高併發（B &gt; {int(KNEE//8)}）、追求整機 throughput",
      "<span class='tagc m'>調小 k，或關掉</span>", "驗證變成 compute-bound，多猜的都在燒算力。"],
     ["長 context（&gt; 16k）", "<span class='tagc r'>先量再決定</span>",
      "接受率顯著下降，實測案例顯示 30k 時反而慢 51%。"],
@@ -1137,7 +1313,7 @@ ul([
     f"<b>NVFP4 讓 122B 單卡跑得動</b>（{gb(Q35.real_weight_bytes)} GB vs "
     f"BF16 的 {gb(Q35.real_bf16_bytes)} GB），可以用 DP 取代 TP，省掉 all-reduce。",
     f"<b>speculative decoding 的效益由 B × (k+1) 是否超過 N* 決定。</b>"
-    f"27B 配 DFlash2 k=7 → 安全併發約 {KNEE/8:.0f}；超過就開始賠。",
+    f"27B 配 DFlash2 k=7 → 安全併發約 {int(KNEE//8)}；超過就開始賠。",
     "<b>接受率不是常數。</b>context 從 2k 長到 30k，實測平均接受率從 65% 掉到 39%，"
     "吞吐從 +129% 變成 −51%。",
     "<b>容量是一個條件式，不是一個數字。</b>"

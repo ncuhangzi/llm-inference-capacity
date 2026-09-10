@@ -19,7 +19,7 @@
     {
       "page": 3,
       "title": "報告路線",
-      "bodyH": 671,
+      "bodyH": 673,
       "clip": 0,
       "bad": []
     },
@@ -47,21 +47,21 @@
     {
       "page": 7,
       "title": "Autoregressive：生 T 個 token 就要 T 次 forward",
-      "bodyH": 664,
+      "bodyH": 666,
       "clip": 0,
       "bad": []
     },
     {
       "page": 8,
       "title": "Decoder layer 內部：兩個 mixer",
-      "bodyH": 664,
+      "bodyH": 666,
       "clip": 0,
       "bad": []
     },
     {
       "page": 9,
       "title": "兩種 mixer 各自解決一個問題",
-      "bodyH": 664,
+      "bodyH": 666,
       "clip": 0,
       "bad": []
     },
@@ -89,14 +89,14 @@
     {
       "page": 13,
       "title": "GQA：Q 很多、K/V 很少",
-      "bodyH": 664,
+      "bodyH": 666,
       "clip": 0,
       "bad": []
     },
     {
       "page": 14,
       "title": "Prefill 與 decode：兩種完全不同的工作",
-      "bodyH": 664,
+      "bodyH": 666,
       "clip": 0,
       "bad": []
     },
@@ -109,533 +109,554 @@
     },
     {
       "page": 16,
+      "title": "N 指的是哪 292 個 token",
+      "bodyH": 664,
+      "clip": 0,
+      "bad": []
+    },
+    {
+      "page": 17,
       "title": "vLLM 把它變成一個服務",
       "bodyH": 0,
       "clip": 0,
       "bad": []
     },
     {
-      "page": 17,
+      "page": 18,
       "title": "vLLM 的執行堆疊",
-      "bodyH": 664,
+      "bodyH": 666,
       "clip": 0,
       "bad": []
     },
     {
-      "page": 18,
+      "page": 19,
       "title": "Continuous batching：空出來的位置立刻補上",
       "bodyH": 664,
       "clip": 0,
       "bad": []
     },
     {
-      "page": 19,
-      "title": "原始示意圖對照",
-      "bodyH": 664,
-      "clip": 0,
-      "bad": []
-    },
-    {
       "page": 20,
-      "title": "PagedAttention：把 KV cache 當成作業系統的分頁",
+      "title": "原始示意圖對照",
       "bodyH": 664,
       "clip": 0,
       "bad": []
     },
     {
       "page": 21,
-      "title": "原始示意圖對照",
+      "title": "PagedAttention：把 KV cache 當成作業系統的分頁",
       "bodyH": 664,
       "clip": 0,
       "bad": []
     },
     {
       "page": 22,
-      "title": "Scheduler 一輪做的四個決定",
+      "title": "原始示意圖對照",
       "bodyH": 664,
       "clip": 0,
       "bad": []
     },
     {
       "page": 23,
+      "title": "Scheduler 一輪做的四個決定",
+      "bodyH": 666,
+      "clip": 0,
+      "bad": []
+    },
+    {
+      "page": 24,
       "title": "Chunked prefill 與 prefix caching",
       "bodyH": 664,
       "clip": 0,
       "bad": []
     },
     {
-      "page": 24,
+      "page": 25,
       "title": "換模型的時候，哪一層真的會動？",
       "bodyH": 664,
       "clip": 0,
       "bad": []
     },
     {
-      "page": 25,
+      "page": 26,
       "title": "三個模型的架構帳本",
       "bodyH": 0,
       "clip": 0,
       "bad": []
     },
     {
-      "page": 26,
-      "title": "三個模型並排",
-      "bodyH": 664,
-      "clip": 0,
-      "bad": []
-    },
-    {
       "page": 27,
-      "title": "Qwen3-32B：純 Transformer 基準線",
-      "bodyH": 664,
+      "title": "三個模型並排",
+      "bodyH": 666,
       "clip": 0,
       "bad": []
     },
     {
       "page": 28,
+      "title": "Qwen3-32B：純 Transformer 基準線",
+      "bodyH": 666,
+      "clip": 0,
+      "bad": []
+    },
+    {
+      "page": 29,
       "title": "Qwen3.8-27B：混合 token mixer + dense FFN",
       "bodyH": 664,
       "clip": 0,
       "bad": []
     },
     {
-      "page": 29,
+      "page": 30,
       "title": "Qwen3.5-122B-A10B：混合 token mixer + MoE",
       "bodyH": 664,
       "clip": 0,
       "bad": []
     },
     {
-      "page": 30,
+      "page": 31,
       "title": "MoE：算力與記憶體的錯位",
       "bodyH": 664,
       "clip": 0,
       "bad": []
     },
     {
-      "page": 31,
+      "page": 32,
       "title": "參數帳本：我們怎麼確定沒算錯",
-      "bodyH": 664,
+      "bodyH": 666,
       "clip": 0,
       "bad": []
     },
     {
-      "page": 32,
+      "page": 33,
       "title": "Gated DeltaNet",
       "bodyH": 0,
       "clip": 0,
       "bad": []
     },
     {
-      "page": 33,
+      "page": 34,
       "title": "Linear attention 的核心想法",
       "bodyH": 664,
       "clip": 0,
       "bad": []
     },
     {
-      "page": 34,
+      "page": 35,
       "title": "GDN 的一次 state update",
       "bodyH": 664,
       "clip": 0,
       "bad": []
     },
     {
-      "page": 35,
+      "page": 36,
       "title": "Delta rule 的直覺",
       "bodyH": 664,
       "clip": 0,
       "bad": []
     },
     {
-      "page": 36,
+      "page": 37,
       "title": "三種記憶：Attention、GDN、SSM",
       "bodyH": 664,
       "clip": 0,
       "bad": []
     },
     {
-      "page": 37,
+      "page": 38,
       "title": "與 Mamba2 / DeltaNet 的關係",
       "bodyH": 664,
       "clip": 0,
       "bad": []
     },
     {
-      "page": 38,
+      "page": 39,
       "title": "一次 decode 走完全部層",
       "bodyH": 664,
       "clip": 0,
       "bad": []
     },
     {
-      "page": 39,
+      "page": 40,
       "title": "Chunkwise prefill：GDN 怎麼吃長 prompt",
       "bodyH": 664,
       "clip": 0,
       "bad": []
     },
     {
-      "page": 40,
+      "page": 41,
       "title": "vLLM 怎麼同時管兩種 cache",
       "bodyH": 664,
       "clip": 0,
       "bad": []
     },
     {
-      "page": 41,
+      "page": 42,
       "title": "量化：NVFP4 與 FP8",
       "bodyH": 0,
       "clip": 0,
       "bad": []
     },
     {
-      "page": 42,
+      "page": 43,
       "title": "NVFP4 與 FP8 的位元佈局",
       "bodyH": 664,
       "clip": 0,
       "bad": []
     },
     {
-      "page": 43,
+      "page": 44,
       "title": "checkpoint 實際量化了哪些張量",
       "bodyH": 664,
       "clip": 0,
       "bad": []
     },
     {
-      "page": 44,
+      "page": 45,
       "title": "省了多少",
       "bodyH": 664,
       "clip": 0,
       "bad": []
     },
     {
-      "page": 45,
+      "page": 46,
       "title": "精度代價",
       "bodyH": 664,
       "clip": 0,
       "bad": []
     },
     {
-      "page": 46,
+      "page": 47,
       "title": "量化不會移動屋頂線的轉折點",
       "bodyH": 664,
       "clip": 0,
       "bad": []
     },
     {
-      "page": 47,
+      "page": 48,
       "title": "單卡記憶體帳本",
       "bodyH": 0,
       "clip": 0,
       "bad": []
     },
     {
-      "page": 48,
+      "page": 49,
       "title": "兩種 cache、兩種成長曲線",
       "bodyH": 664,
       "clip": 0,
       "bad": []
     },
     {
-      "page": 49,
+      "page": 50,
       "title": "KV cache 的容量計算",
       "bodyH": 664,
       "clip": 0,
       "bad": []
     },
     {
-      "page": 50,
+      "page": 51,
       "title": "SSM cache 的容量計算",
       "bodyH": 664,
       "clip": 0,
       "bad": []
     },
     {
-      "page": 51,
+      "page": 52,
       "title": "交會點：context 多長時 KV 才追上 SSM",
       "bodyH": 664,
       "clip": 0,
       "bad": []
     },
     {
-      "page": 52,
+      "page": 53,
       "title": "互動試算：B200 單卡的完整帳本",
       "bodyH": 664,
       "clip": 0,
       "bad": []
     },
     {
-      "page": 53,
-      "title": "併發上限與 context 的取捨",
-      "bodyH": 664,
-      "clip": 0,
-      "bad": []
-    },
-    {
       "page": 54,
-      "title": "Speculative decoding對 serving 的影響",
-      "bodyH": 0,
+      "title": "併發上限與 context 的取捨",
+      "bodyH": 666,
       "clip": 0,
       "bad": []
     },
     {
       "page": 55,
-      "title": "為什麼可以「猜」",
+      "title": "同一顆模型，兩個引擎怎麼記帳",
       "bodyH": 664,
       "clip": 0,
       "bad": []
     },
     {
       "page": 56,
-      "title": "一輪 draft → verify → accept",
-      "bodyH": 664,
+      "title": "Speculative decoding對 serving 的影響",
+      "bodyH": 0,
       "clip": 0,
       "bad": []
     },
     {
       "page": 57,
-      "title": "MTP 與 DFlash2：兩種完全不同的起草器",
+      "title": "為什麼可以「猜」",
       "bodyH": 664,
       "clip": 0,
       "bad": []
     },
     {
       "page": 58,
-      "title": "兩個起草器的規格對照",
+      "title": "一輪 draft → verify → accept",
       "bodyH": 664,
       "clip": 0,
       "bad": []
     },
     {
       "page": 59,
-      "title": "接受長度 τ：報酬遞減得很快",
+      "title": "MTP 與 DFlash2：兩種完全不同的起草器",
       "bodyH": 664,
       "clip": 0,
       "bad": []
     },
     {
       "page": 60,
-      "title": "(k+1)× 的 token 撞上屋頂線",
+      "title": "兩個起草器的規格對照",
       "bodyH": 664,
       "clip": 0,
       "bad": []
     },
     {
       "page": 61,
-      "title": "互動試算：spec decoding 划不划算",
+      "title": "接受長度 τ：報酬遞減得很快",
       "bodyH": 664,
       "clip": 0,
       "bad": []
     },
     {
       "page": 62,
-      "title": "長 context 會吃掉接受率",
+      "title": "(k+1)× 的 token 撞上屋頂線",
       "bodyH": 664,
       "clip": 0,
       "bad": []
     },
     {
       "page": 63,
-      "title": "其他三個副作用",
+      "title": "一次驗證 8 個位置：為什麼可行、什麼時候變貴",
       "bodyH": 664,
       "clip": 0,
       "bad": []
     },
     {
       "page": 64,
-      "title": "什麼時候該開、什麼時候該關",
+      "title": "互動試算：spec decoding 划不划算",
       "bodyH": 664,
       "clip": 0,
       "bad": []
     },
     {
       "page": 65,
-      "title": "上線設定與命令",
+      "title": "長 context 會吃掉接受率",
       "bodyH": 664,
       "clip": 0,
       "bad": []
     },
     {
       "page": 66,
-      "title": "延遲指標的定義與陷阱",
-      "bodyH": 0,
+      "title": "其他三個副作用",
+      "bodyH": 664,
       "clip": 0,
       "bad": []
     },
     {
       "page": 67,
-      "title": "一個 request 的完整時間軸",
+      "title": "什麼時候該開、什麼時候該關",
       "bodyH": 664,
       "clip": 0,
       "bad": []
     },
     {
       "page": 68,
-      "title": "四個指標的精確定義",
+      "title": "上線設定與命令",
       "bodyH": 664,
       "clip": 0,
       "bad": []
     },
     {
       "page": 69,
-      "title": "高併發時，每個指標各自怎麼動",
-      "bodyH": 664,
+      "title": "延遲指標的定義與陷阱",
+      "bodyH": 0,
       "clip": 0,
       "bad": []
     },
     {
       "page": 70,
-      "title": "max_num_seqs 該掐多少",
+      "title": "一個 request 的完整時間軸",
       "bodyH": 664,
       "clip": 0,
       "bad": []
     },
     {
       "page": 71,
-      "title": "自己模擬一次高併發",
+      "title": "四個指標的精確定義",
       "bodyH": 664,
       "clip": 0,
       "bad": []
     },
     {
       "page": 72,
-      "title": "百分位與 goodput",
+      "title": "高併發時，每個指標各自怎麼動",
       "bodyH": 664,
       "clip": 0,
       "bad": []
     },
     {
       "page": 73,
-      "title": "兩階段負載測試",
-      "bodyH": 0,
+      "title": "max_num_seqs 該掐多少",
+      "bodyH": 664,
       "clip": 0,
       "bad": []
     },
     {
       "page": 74,
-      "title": "閉環 vs 開環",
+      "title": "自己模擬一次高併發",
       "bodyH": 664,
       "clip": 0,
       "bad": []
     },
     {
       "page": 75,
-      "title": "Stage 1：找飽和點",
+      "title": "百分位與 goodput",
       "bodyH": 664,
       "clip": 0,
       "bad": []
     },
     {
       "page": 76,
-      "title": "Stage 2：找 SLO 容量",
-      "bodyH": 664,
+      "title": "兩階段負載測試",
+      "bodyH": 0,
       "clip": 0,
       "bad": []
     },
     {
       "page": 77,
-      "title": "SLO 邊界搜尋",
+      "title": "閉環 vs 開環",
       "bodyH": 664,
       "clip": 0,
       "bad": []
     },
     {
       "page": 78,
-      "title": "從 RPS 換算服務人數",
+      "title": "Stage 1：找飽和點",
       "bodyH": 664,
       "clip": 0,
       "bad": []
     },
     {
       "page": 79,
-      "title": "報告該寫什麼",
+      "title": "Stage 2：找 SLO 容量",
       "bodyH": 664,
       "clip": 0,
       "bad": []
     },
     {
       "page": 80,
+      "title": "SLO 邊界搜尋",
+      "bodyH": 664,
+      "clip": 0,
+      "bad": []
+    },
+    {
+      "page": 81,
+      "title": "從 RPS 換算服務人數",
+      "bodyH": 664,
+      "clip": 0,
+      "bad": []
+    },
+    {
+      "page": 82,
+      "title": "報告該寫什麼",
+      "bodyH": 664,
+      "clip": 0,
+      "bad": []
+    },
+    {
+      "page": 83,
       "title": "可以帶走的十個結論",
       "bodyH": 0,
       "clip": 0,
       "bad": []
     },
     {
-      "page": 81,
-      "title": "十個結論",
-      "bodyH": 671,
-      "clip": 0,
-      "bad": []
-    },
-    {
-      "page": 82,
-      "title": "該轉哪個旋鈕",
-      "bodyH": 671,
-      "clip": 0,
-      "bad": []
-    },
-    {
-      "page": 83,
-      "title": "下一步：這份報告沒有回答的問題",
-      "bodyH": 671,
-      "clip": 0,
-      "bad": []
-    },
-    {
       "page": 84,
+      "title": "十個結論",
+      "bodyH": 673,
+      "clip": 0,
+      "bad": []
+    },
+    {
+      "page": 85,
+      "title": "該轉哪個旋鈕",
+      "bodyH": 673,
+      "clip": 0,
+      "bad": []
+    },
+    {
+      "page": 86,
+      "title": "下一步：這份報告沒有回答的問題",
+      "bodyH": 673,
+      "clip": 0,
+      "bad": []
+    },
+    {
+      "page": 87,
       "title": "附錄",
       "bodyH": 0,
       "clip": 0,
       "bad": []
     },
     {
-      "page": 85,
-      "title": "附錄 A：名詞表（1/2）",
-      "bodyH": 671,
-      "clip": 0,
-      "bad": []
-    },
-    {
-      "page": 86,
-      "title": "附錄 A：名詞表（2/2）",
-      "bodyH": 671,
-      "clip": 0,
-      "bad": []
-    },
-    {
-      "page": 87,
-      "title": "附錄 B：config 與 checkpoint 的原始證據",
-      "bodyH": 664,
-      "clip": 0,
-      "bad": []
-    },
-    {
       "page": 88,
+      "title": "附錄 A：名詞表（1/2）",
+      "bodyH": 673,
+      "clip": 0,
+      "bad": []
+    },
+    {
+      "page": 89,
+      "title": "附錄 A：名詞表（2/2）",
+      "bodyH": 673,
+      "clip": 0,
+      "bad": []
+    },
+    {
+      "page": 90,
+      "title": "附錄 B：config 與 checkpoint 的原始證據",
+      "bodyH": 666,
+      "clip": 0,
+      "bad": []
+    },
+    {
+      "page": 91,
       "title": "附錄 C：可以直接複製的命令",
       "bodyH": 664,
       "clip": 0,
       "bad": []
     },
     {
-      "page": 89,
+      "page": 92,
       "title": "附錄 D：GDN 的數學細節",
       "bodyH": 664,
       "clip": 0,
       "bad": []
     },
     {
-      "page": 90,
+      "page": 93,
       "title": "附錄 E：單卡與多卡",
       "bodyH": 664,
       "clip": 0,
       "bad": []
     },
     {
-      "page": 91,
+      "page": 94,
       "title": "附錄 F：來源與資料界線",
-      "bodyH": 671,
+      "bodyH": 673,
       "clip": 0,
       "bad": []
     }

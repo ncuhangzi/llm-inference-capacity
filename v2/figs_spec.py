@@ -394,7 +394,7 @@ def fig_spec_batch():
         b.append(line(X(bx), y0 - h, X(bx), y0, stroke=C["mem"], sw=1.3, dash="4 4", s=st))
         b.append(txt(X(bx) + 6, y0 - h + 16, f"B × (k+1) 撞到 N* = {knee:.0f}",
                      cls="lbl b", size=10.6, fill=C["mem"], ds=st))
-        b.append(txt(X(bx) + 6, y0 - h + 32, f"→ B ≈ {bx:,.0f}", cls="lbl", size=10.6,
+        b.append(txt(X(bx) + 6, y0 - h + 32, f"→ B ≈ {int(bx):,}", cls="lbl", size=10.6,
                      fill=C["mem"], ds=st))
     b.append(g([rect(716, 40, 284, 226, fill=C["card2"]),
                 txt(730, 62, "為什麼兩條線形狀不同", cls="lbl b", size=12),

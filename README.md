@@ -14,8 +14,8 @@
 
 | 我想… | 開這個 | 大小 |
 | --- | --- | --- |
-| **快速讀懂**（40–50 分鐘，長文＋可互動圖表） | [`LLM推論技術部落格.html`](LLM推論技術部落格.html) | 400 KB |
-| **上台講**（91 頁投影片，逐步動畫、講稿、目錄） | [`LLM推論報告_v2.html`](LLM推論報告_v2.html) | 1.3 MB |
+| **快速讀懂**（40–50 分鐘，長文＋可互動圖表） | [`LLM推論技術部落格.html`](LLM推論技術部落格.html) | 410 KB |
+| **上台講**（94 頁投影片，逐步動畫、講稿、目錄） | [`LLM推論報告_v2.html`](LLM推論報告_v2.html) | 1.3 MB |
 | **列印或傳給人** | [`LLM推論報告_v2.pdf`](LLM推論報告_v2.pdf) | 4.6 MB |
 
 ```bash
@@ -144,7 +144,7 @@ roofline knee (precision-invariant): bf16=292.2 fp8=292.2 nvfp4=292.2 tokens/ste
 
 ```
 LLM推論技術部落格.html      長文版（單檔、離線可用）
-LLM推論報告_v2.html         簡報版 82 頁
+LLM推論報告_v2.html         簡報版 94 頁
 LLM推論報告_v2.pdf          簡報的靜態版
 講者筆記_v2.md              每頁講稿與來源
 使用說明.md                 中文的詳細說明
@@ -167,7 +167,7 @@ v2/
   assemble.py / build.py   組裝簡報
   blog.py                  組裝部落格
   humanize*.py             文字修潤的改寫表（一次性腳本，已套用）
-  qa.cjs / interact.cjs    版面溢出檢查、PDF 輸出、27 項互動測試
+  qa.cjs / interact.cjs    版面溢出檢查、PDF 輸出、29 項互動測試
 
 research/                  官方 config、safetensors 統計、weight map 摘要、
                            tokenize_demo.py（用官方 tokenizer 實跑 BPE）
@@ -195,7 +195,7 @@ checkpoint 的 revision hash 列在文件的附錄裡。資料查核日期 2026-
 vLLM 官方文件與部落格、Gated Delta Networks（arXiv 2412.06464）、
 DFlash（arXiv 2602.06036）、EAGLE-3（arXiv 2503.01840）、
 SmartSpec（arXiv 2406.14066）、NVIDIA 與 Qwen 的模型卡、NVIDIA HGX B200 規格表。
-完整的 27 筆來源與連結在部落格文末的參考文獻。
+完整的 31 筆來源與連結在部落格文末的參考文獻。
 
 ## 授權
 
